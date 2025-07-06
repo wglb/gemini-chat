@@ -6,6 +6,6 @@
   :license  "GPLv3"
   :version "0.0.1"
   :serial t
-  :depends-on (#:drakma #:cl-json #:uiop)
+  :depends-on (#:drakma #:jsown #:uiop)
   :components ((:file "gemini-chat-pkg")
                (:file "gemini-chat")))
