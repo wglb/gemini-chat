@@ -1,8 +1,8 @@
 ;;;; gemini-chat.asd
 
 (asdf:defsystem #:gemini-chat
-  :description "Describe gemini-chat here"
-  :author "Your Name <your.name@example.com>"
+  :description "Lisp-based gemini chat"
+  :author "wgl@ciex-security.com"
   :license  "GPLv3"
   :version "0.0.1"
   :serial t
