@@ -7,5 +7,5 @@
   :version "0.0.1"
   :serial t
   :depends-on (#:drakma #:cl-json #:uiop)
-  :components ((:file "gemini-chat-pkg.lisp")
+  :components ((:file "gemini-chat-pkg")
                (:file "gemini-chat")))

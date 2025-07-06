@@ -21,9 +21,7 @@
 
 (in-package #:gemini-chat)
 
-(ql:quickload :drakma)
-(ql:quickload :cl-json)
-(ql:quickload :uiop) ; For uiop:getenv
+(declaim (optimize (speed 0) (safety 3) (debug 3) (space 0)))
 
 (defun get-gemini-api-key ()
   "Retrieves the Gemini API key from the GEMINI_API_KEY environment variable.

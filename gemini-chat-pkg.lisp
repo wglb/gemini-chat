@@ -1,4 +1,5 @@
 ;;;; package.lisp
 
 (defpackage #:gemini-chat
-  (:use #:cl))
+  (:use #:cl #:drakma #:cl-json #:uiop)
+  (:shadowing-import-from :drakma :parameter-error))
