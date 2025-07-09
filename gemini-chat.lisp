@@ -74,8 +74,8 @@
          ;; --- END JSOWN ENCODING ---
 
          (headers '(("Content-Type" . "application/json"))))
-    (format t "~&Making API request to: ~a~%" api-url)
-    (format t "JSON string being sent: ~a~%" json-payload-string)
+    (xlg :thinking-log "~&Making API request to: ~a~%" api-url)
+    (xlg :thinking-log "JSON string being sent: ~a~%" json-payload-string)
 
     (time (handler-case
         (http-request api-url
@@ -95,7 +95,7 @@
    Returns the parsed JSON as a Lisp object (jsown's internal :OBJ format)."
   (handler-case
       (let ((json-string (uiop:slurp-stream-string response-stream)))
-        (format t "~&Raw JSON string received: ~a~%" json-string)
+        (xlg :thinking-log "~&Raw JSON string received: ~a~%" json-string)
         (jsown:parse json-string))
     (error (c)
       (error "Failed to parse JSON response: ~a" c))))
@@ -107,7 +107,8 @@
   ;; Add a check for an 'error' key at the top level
   (if (jsown:keyp parsed-json "error") ; <--- Check for "error" key
       (progn
-        (format t "~&API returned an error: ~a~%" (jsown:val parsed-json "error"))
+        (xlg :thinking-log "~&API returned an error: ~a~%" (jsown:val parsed-json "error"))
+        (xlg :answer-log "~&API returned an error: ~a~%" (jsown:val parsed-json "error"))
         nil) ; Return NIL if there's an error in the response
       (let* ((candidates (jsown:val parsed-json "candidates"))
              (first-candidate (car candidates)))
@@ -122,10 +123,12 @@
   "Starts and manages a multi-turn conversation with the Gemini API.
    Takes an initial prompt, then allows for follow-up questions.
    Returns the complete conversation history."
-  (let ((conversation-history nil))
+  (with-open-log-files ((:answer-log "answer" :ymd)
+                        (:thinking-log "thinking :ymd"))
+    (let ((conversation-history nil))
 
     ;; First turn
-    (format t "~&User: ~a~%" initial-prompt)
+    (xlg :thinking-log "~&User: ~a" initial-prompt)
     (let* ((user-turn (create-message-turn "user" initial-prompt))
            (response-stream (make-gemini-api-request (list user-turn) :model model))
            (parsed-json (parse-gemini-api-response response-stream))
@@ -134,11 +137,12 @@
 
       (if model-response-text
           (progn
-            (format t "~&Gemini: ~a~%" model-response-text)
+            (xlg :answer-log  "~&Gemini: ~a" model-response-text)
+            (xlg :thinking-log "~s" (list user-turn model-turn))
             (setf conversation-history (append conversation-history (list user-turn model-turn))))
           (progn
-            (format t "~&Error on initial turn: ~a~%" (or (jsown:val (jsown:val parsed-json "error") "message") "No text generated or unexpected response structure."))
-            (format t "Parsed JSON: ~s~%" parsed-json)
+            (xlg :answer-log "~&Error on initial turn: ~a~%" (or (jsown:val (jsown:val parsed-json "error") "message") "No text generated or unexpected response structure."))
+            (xlg :thinking-log "Parsed JSON: ~s~%" parsed-json)
             (return-from run-gemini-conversation nil)))
 
       ;; Loop for follow-up turns
@@ -147,6 +151,7 @@
         (let ((next-prompt (read-line)))
           (when (string-equal next-prompt "quit")
             (format t "~&~%Ending conversation.~%")
+            (xlg :answer-log "~&~%Ending conversation.")
             (return))
 
           (let* ((new-user-turn (create-message-turn "user" next-prompt))
@@ -158,10 +163,23 @@
 
             (if model-response-text
                 (progn
-                  (format t "~&Gemini: ~a~%" model-response-text)
+                  (xlg :answer-log "~&Gemini: ~a~%" model-response-text)
+                  (xlg :thinking-log "~s" (list user-turn model-turn))
                   (setf conversation-history (append updated-history (list new-model-turn))))
                 (progn
-                  (format t "~&Error on follow-up turn: ~a~%" (or (jsown:val (jsown:val parsed-json "error") "message") "No text generated or unexpected response structure."))
-                  (format t "Parsed JSON: ~s~%" parsed-json)
+                  (xlg :answer-log "~&Error on follow-up turn: ~a" (or (jsown:val (jsown:val parsed-json "error") "message") "No text generated or unexpected response structure."))
+                  (xlg :thinking-log "Parsed JSON: ~s" parsed-json)
                   (return)))))))
-    conversation-history))
+    conversation-history)))
+
+(defun gemini-top ()
+  (format nil "first ask is ~s" (format nil "~{~a ~}" (rest sb-ext:*posix-argv*)))
+  (run-gemini-conversation (format nil "~{~a ~}" (rest sb-ext:*posix-argv*)) ))
+
+(defun save-core ()
+  (format t "building being  ~a~%" (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
+  (sb-ext:save-lisp-and-die "gemini-chat" 
+                            :toplevel #'gemini-top
+							:save-runtime-options t
+							:compression 22
+                            :executable t))
