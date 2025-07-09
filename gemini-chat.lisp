@@ -59,7 +59,7 @@
          (headers '(("Content-Type" . "application/json"))))
     (xlg :thinking-log "~&Making API request to: ~a" api-url)
     (format t ":thinking-log says~&Making API request to: ~a~%" api-url)
-    (xlg :answer-log ":thinking-log: Making API request to: ~a~%" api-url :to-stdout)
+    (xlg :answer-log ":thinking-log: Making API request to: ~a" api-url :to-stdout)
     (xlg :thinking-log "JSON string being sent: ~a" json-payload-string)
 
     (handler-case
