@@ -112,7 +112,7 @@
 		 (if (jsown:keyp parsed-json "error") ; <--- Check for "error" key
 			 (progn
 			   (xlg :thinking-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
-			   (xlg :answer-log "~&API returned an error: ~a" (jsown:val parsed-json "error") :stdout)
+			   (xlg :answer-log "~&API returned an error: ~a" (jsown:val parsed-json "error") :to-stdout)
 			   nil) ; Return NIL if there's an error in the response
 			 (let* ((candidates (jsown:val parsed-json "candidates"))
 					(first-candidate (car candidates)))
@@ -123,7 +123,7 @@
 				   (when first-part
 					 (jsown:val first-part "text")))))))
 		(t (xlg :answer "No parsed json available")
-		   (xlg :answer "No parsed json available umgawa" :stdout)
+		   (xlg :answer "No parsed json available umgawa" :to-stdout)
 		   "No parsed json available. Why?")))
 
 (defun run-gemini-conversation (initial-prompt &key (model "gemini-2.5-pro"))
@@ -144,14 +144,14 @@
 
 		(if model-response-text
 			(progn
-              (xlg :answer-log "~&Gemini: ~a"  model-response-text :stdout)
+              (xlg :answer-log "~&Gemini: ~a"  model-response-text :to-stdout)
               (xlg :thinking-log "~s" (list user-turn model-turn))
 			  (flush-all-log-streams)
               (setf conversation-history (append conversation-history (list user-turn model-turn))))
 			(progn
               (xlg :answer-log "~&Error on initial turn: ~a"
 				   (or (jsown:val (jsown:val parsed-json "error") "message") "No text generated or unexpected response structure.")
-				   :stdout)
+				   :to-stdout)
               (xlg :thinking-log "Parsed JSON: ~s" parsed-json)
 			  (flush-all-log-streams)
               (return-from run-gemini-conversation nil)))
@@ -162,7 +162,7 @@
           (let ((next-prompt (read-line)))
 			(when (string-equal next-prompt "quit")
               (format t "~&~%Ending conversation.~%")
-              (xlg :answer-log "~&~%Ending conversation, dude." :stdout)
+              (xlg :answer-log "~&~%Ending conversation, dude." :to-stdout)
 			  (flush-all-log-streams)
               (return))
 
@@ -175,14 +175,14 @@
 
               (if model-response-text
                   (progn
-					(xlg :answer-log "~&Gemini: ~a" model-response-text :stdout)
+					(xlg :answer-log "~&Gemini: ~a" model-response-text :to-stdout)
 					(xlg :answer-log "~&Complex: ~a" (list user-turn model-turn))
 					(xlg :thinking-log "~s" (list user-turn model-turn))
 					(flush-all-log-streams)
 					(setf conversation-history (append updated-history (list new-model-turn))))
                   (progn
 					(xlg :answer-log "~&Error on follow-up turn: ~a"
-						 (or (jsown:val (jsown:val parsed-json "error") "message") "No text generated or unexpected response structure.") :stdout)
+						 (or (jsown:val (jsown:val parsed-json "error") "message") "No text generated or unexpected response structure.") :to-stdout)
 					(xlg :thinking-log "Parsed JSON: ~s" parsed-json)
 					(flush-all-log-streams)
 					(return)))))))
@@ -199,3 +199,4 @@
 							:save-runtime-options t
 							:compression 22
                             :executable t))
+
