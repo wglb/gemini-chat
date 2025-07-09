@@ -75,22 +75,22 @@
 
          (headers '(("Content-Type" . "application/json"))))
     (xlg :thinking-log "~&Making API request to: ~a" api-url)
-	(format t  ":thinking-log~&Making API request to: ~a~%" api-url)
-	(xlg :answer-log ":thinking-log~&Making API request to: ~a~%" api-url)
+	(format t  ":thinking-log says~&Making API request to: ~a~%" api-url)
+	(xlg :answer-log ":thinking-log: Making API request to: ~a~%" api-url :to-stdout)
     (xlg :thinking-log "JSON string being sent: ~a" json-payload-string)
 
-    (time (handler-case
+    (handler-case
         (http-request api-url
-                             :method :post
-                             :content-type "application/json"
-                             :content json-payload-string
-                             :additional-headers headers
-                             :want-stream t
-                             :force-ssl t)
+                      :method :post
+                      :content-type "application/json"
+                      :content json-payload-string
+                      :additional-headers headers
+                      :want-stream t
+                      :force-ssl t)
       (drakma-error (c)
         (error "HTTP Request Failed: ~a" c))
       (error (c)
-        (error "An unexpected error occurred during the HTTP request: ~a" c))))))
+        (error "An unexpected error occurred during the HTTP request: ~a" c)))))
 
 (defun parse-gemini-api-response (response-stream)
   "Parses the JSON response from the Gemini API response stream using jsown.
@@ -122,8 +122,7 @@
 						(first-part (car parts)))
 				   (when first-part
 					 (jsown:val first-part "text")))))))
-		(t (xlg :answer "No parsed json available")
-		   (xlg :answer "No parsed json available umgawa" :to-stdout)
+		(t (xlg :answer "No parsed json available: ~a" parsed-json)
 		   "No parsed json available. Why?")))
 
 (defun run-gemini-conversation (initial-prompt &key (model "gemini-2.5-pro"))
@@ -132,6 +131,8 @@
    Returns the complete conversation history."
   (with-open-log-files ((:answer-log "the-answer.log" :ymd)
                         (:thinking-log "thinking.log" :ymd))
+	(xlg :answer-log "begin----------------------------------------")
+	(xlg :thinking-log "begin----------------------------------------")
     (let ((conversation-history nil))
 
       ;; First turn
