@@ -5,6 +5,8 @@
 
 (declaim (optimize (speed 0) (safety 3) (debug 3) (space 0)))
 
+(defparameter *conversation-tag* "chat")
+
 (defun get-gemini-api-key ()
   "Retrieves the Gemini API key from the GEMINI_API_KEY environment variable.
    Signals an error if the environment variable is not set.
@@ -27,6 +29,7 @@
 ;; REVISED: create-message-content is not directly used by create-message-turn
 ;; We'll inline its logic directly into create-message-turn's parts list.
 ;; This function can be removed if not used elsewhere, or kept for clarity.
+
 (defun create-message-content (parts)
   "Creates a Lisp :OBJ representing 'content' in the Gemini API JSON structure."
   (jsown:new-js ("parts" parts))) ; Correct: {"parts": [...]}
@@ -46,7 +49,7 @@
    Returns the response stream if successful."
   (let* ((api-key (get-gemini-api-key))
          (api-url (format nil "https://generativelanguage.googleapis.com/v1beta/models/~a:generateContent?key=~a"
-                          model api-key))
+                            model api-key))
          ;; --- JSOWN ENCODING (Revised) ---
          ;; The top-level payload needs to be a JSON object with a "contents" key.
          ;; We must explicitly construct this using jsown:new-js to guarantee :OBJ format
@@ -57,7 +60,7 @@
          ;; --- END JSOWN ENCODING ---
 
          (headers '(("Content-Type" . "application/json"))))
-    (xlg :thinki-log "~&Making API request to: ~a" api-url)
+    (xlg :thinking-log "~&Making API request to: ~a" api-url)
     (xlg :thinking-log "JSON string being sent: ~a" json-payload-string)
 
     (handler-case
@@ -92,28 +95,76 @@
   (cond (parsed-json
          (if (jsown:keyp parsed-json "error") ; <--- Check for "error" key
              (progn
-                (xlg :thinking-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
-                (xlgt :answer-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
-                nil) ; Return NIL if there's an error in the response
+               (xlg :thinking-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
+               (xlgt :answer-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
+               nil) ; Return NIL if there's an error in the response
              (let* ((candidates (jsown:val parsed-json "candidates"))
                     (first-candidate (car candidates)))
-                (when first-candidate
+               (when first-candidate
                  (let* ((content (jsown:val first-candidate "content"))
                         (parts (jsown:val content "parts"))
                         (first-part (car parts)))
-                    (when first-part
+                   (when first-part
                      (jsown:val first-part "text")))))))
         (t (xlgt :answer-log "No parsed json available: ~a" parsed-json) ; Changed :answer to :answer-log
            "No parsed json available. Why?")))
 
-(defun run-gemini-conversation (initial-prompt &key (model "gemini-2.5-pro") (tag "chat"))
+(defun handle-gemini-turn-response (model-response-text parsed-json user-turn model-turn conversation-history &key (turn-type "turn"))
+  "Handles the processing of a Gemini API response for a single turn,
+   logging the output and updating conversation history.
+   Returns (values updated-conversation-history t) on success,
+   or (values nil nil) on error, signaling the need for the caller to stop."
+  (if model-response-text
+      (progn
+        (xlgt :answer-log "~&Gemini: ~a" model-response-text)
+        ;; Log the specific user and model turns involved in this step
+        (xlg :thinking-log "Turns processed: ~s" (list user-turn model-turn))
+        (flush-all-log-streams)
+        (values (append conversation-history (list user-turn model-turn)) t))
+      (progn
+        (xlgt :answer-log "~&Error on ~a: ~a" turn-type
+              (or (jsown:val (jsown:val parsed-json "error") "message") "No text generated or unexpected response structure."))
+        (xlg :thinking-log "Parsed JSON for ~a: ~s" turn-type parsed-json)
+        (flush-all-log-streams)
+        (values nil nil)))) ; Return current history and exit loop on error
+
+(defun gemini-chat-loop (conversation-history model)
+  "Manages the interactive follow-up turns of a Gemini conversation.
+   Takes the current conversation history and model as input.
+   Returns the final conversation history."
+  (loop
+    (format t "~&~%Enter your next prompt (or type 'quit' to end):~%")
+    (let ((next-prompt (read-line)))
+      (when (string-equal next-prompt "quit")
+        (format t "~&~%Ending conversation.~%")
+        (xlgt :answer-log "~&~%Ending conversation, dude.")
+        (flush-all-log-streams)
+        (return conversation-history)) ; Return current history and exit loop
+
+      (xlg :thinking-log "~&User: ~a" next-prompt)
+      (xlgt :answer-log "User: ~a" next-prompt)
+
+      (let* ((new-user-turn (create-message-turn "user" next-prompt))
+             (updated-history (append conversation-history (list new-user-turn)))
+             (response-stream (make-gemini-api-request updated-history :model model))
+             (parsed-json (parse-gemini-api-response response-stream))
+             (model-response-text (extract-gemini-text parsed-json))
+             (new-model-turn (create-message-turn "model" (or model-response-text "Error: No response"))))
+
+        (multiple-value-bind (new-total-history success)
+            (handle-gemini-turn-response model-response-text parsed-json new-user-turn new-model-turn updated-history :turn-type "follow-up turn")
+          (if success
+              (setf conversation-history new-total-history) ; Update history for the next iteration of the loop
+              (return conversation-history)))))))
+
+(defun gemini-conversation (initial-prompt &key (model "gemini-2.5-pro") (tag "chat"))
   "Starts and manages a multi-turn conversation with the Gemini API.
    Takes an initial prompt, then allows for follow-up questions.
    Returns the complete conversation history."
   (with-open-log-files ((:answer-log (format nil "~a-the-answer.log" tag) :ymd)
                         (:thinking-log (format nil "~a-thinking.log" tag) :ymd))
-	(xlg :answer-log "begin----------------------------------------")
-	(xlg :thinking-log "begin----------------------------------------")
+    (xlg :answer-log "begin----------------------------------------")
+    (xlg :thinking-log "begin----------------------------------------")
     (let ((conversation-history nil))
 
       ;; First turn
@@ -125,53 +176,23 @@
              (model-response-text (extract-gemini-text parsed-json)) ; This now handles error responses gracefully
              (model-turn (create-message-turn "model" (or model-response-text "Error: No response"))))
 
-        (if model-response-text
-            (progn
-              (xlgt :answer-log "~&Gemini: ~a" model-response-text)
-              (xlg :thinking-log "~s" (list user-turn model-turn))
-              (flush-all-log-streams)
-              (setf conversation-history (append conversation-history (list user-turn model-turn))))
-            (progn
-              (xlgt :answer-log "~&Error on initial turn: ~a"
-                   (or (jsown:val (jsown:val parsed-json "error") "message") "No text generated or unexpected response structure."))
-              (xlg :thinking-log "Parsed JSON: ~s" parsed-json)
-			  (flush-all-log-streams)
-              (return-from run-gemini-conversation nil)))
+        (multiple-value-bind (new-history success)
+            (handle-gemini-turn-response model-response-text parsed-json user-turn model-turn conversation-history :turn-type "initial turn")
+          (if success
+              (setf conversation-history new-history)
+              (return-from gemini-conversation nil))))
 
-        ;; Loop for follow-up turns
-        (loop
-          (format t "~&~%Enter your next prompt (or type 'quit' to end):~%")
-          (let ((next-prompt (read-line)))
-            (when (string-equal next-prompt "quit")
-              (format t "~&~%Ending conversation.~%")
-              (xlgt :answer-log "~&~%Ending conversation, dude.")
-              (flush-all-log-streams)
-              (return))
-
-            (let* ((new-user-turn (create-message-turn "user" next-prompt))
-                   (updated-history (append conversation-history (list new-user-turn)))
-                   (response-stream (make-gemini-api-request updated-history :model model))
-                   (parsed-json (parse-gemini-api-response response-stream))
-                   (model-response-text (extract-gemini-text parsed-json))
-                   (new-model-turn (create-message-turn "model" (or model-response-text "Error: No response"))))
-
-              (if model-response-text
-                  (progn
-                    (xlgt :answer-log "~&Gemini: ~a" model-response-text)
-                    (xlg :thinking-log "~s" (list user-turn model-turn))
-                    (flush-all-log-streams)
-                    (setf conversation-history (append updated-history (list new-model-turn))))
-                  (progn
-                    (xlg :answer-log "~&Error on follow-up turn: ~a"
-                         (or (jsown:val (jsown:val parsed-json "error") "message") "No text generated or unexpected response structure."))
-                    (xlg :thinking-log "Parsed JSON: ~s" parsed-json)
-                    (flush-all-log-streams)
-                    (return)))))))
-      conversation-history)))
+      ;; If the initial turn was successful, proceed to the interactive loop
+      (when conversation-history
+        (setf conversation-history (gemini-chat-loop conversation-history model)))
+      conversation-history))) ; Return the final conversation history
 
 (defun gemini-top ()
   (format nil "first ask is ~s" (format nil "~{~a ~}" (rest sb-ext:*posix-argv*)))
-  (run-gemini-conversation (format nil "~{~a ~}" (rest sb-ext:*posix-argv*)) ))
+  (let ((cmd (rest sb-ext:*posix-argv*)))
+    (if (first cmd)
+        (setf *conversation-tag* (first cmd)))
+    (gemini-conversation (format nil "~{~a ~}" (rest cmd)) :tag (first cmd))))
 
 (defun save-core ()
   (format t "building being ~a~%" (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
