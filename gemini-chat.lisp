@@ -57,9 +57,8 @@
          ;; --- END JSOWN ENCODING ---
 
          (headers '(("Content-Type" . "application/json"))))
-    (xlg :thinking-log "~&Making API request to: ~a" api-url)
-    (format t ":thinking-log says~&Making API request to: ~a~%" api-url)
-    (xlg :answer-log ":thinking-log: Making API request to: ~a" api-url :to-stdout)
+    (xlg :thinki-log "~&Making API request to: ~a" api-url)
+    (xlg :answer-log "Making API request to: ~a" api-url :to-stdout)
     (xlg :thinking-log "JSON string being sent: ~a" json-payload-string)
 
     (handler-case
@@ -120,6 +119,7 @@
 
       ;; First turn
       (xlg :thinking-log "~&User: ~a" initial-prompt)
+      (xlg :answer-log "User: ~a" initial-prompt :to-stdout)
       (let* ((user-turn (create-message-turn "user" initial-prompt))
              (response-stream (make-gemini-api-request (list user-turn) :model model))
              (parsed-json (parse-gemini-api-response response-stream))
