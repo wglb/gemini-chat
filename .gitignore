@@ -1,4 +1,7 @@
 *~
 .emacs.desktop*
 push-both.sh
-default.el
+*.log
+gemini-chat
+logs
+
