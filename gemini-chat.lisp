@@ -106,12 +106,12 @@
         (t (xlgt :answer-log "No parsed json available: ~a" parsed-json) ; Changed :answer to :answer-log
            "No parsed json available. Why?")))
 
-(defun run-gemini-conversation (initial-prompt &key (model "gemini-2.5-pro"))
+(defun run-gemini-conversation (initial-prompt &key (model "gemini-2.5-pro") (tag "chat"))
   "Starts and manages a multi-turn conversation with the Gemini API.
    Takes an initial prompt, then allows for follow-up questions.
    Returns the complete conversation history."
-  (with-open-log-files ((:answer-log "the-answer.log" :ymd)
-                        (:thinking-log "thinking.log" :ymd))
+  (with-open-log-files ((:answer-log (format nil "~a-the-answer.log" tag) :ymd)
+                        (:thinking-log (format nil "~a-thinking.log" tag) :ymd))
 	(xlg :answer-log "begin----------------------------------------")
 	(xlg :thinking-log "begin----------------------------------------")
     (let ((conversation-history nil))
@@ -158,7 +158,6 @@
               (if model-response-text
                   (progn
                     (xlgt :answer-log "~&Gemini: ~a" model-response-text)
-                    (xlg :answer-log "~&Complex: ~a" (list user-turn model-turn))
                     (xlg :thinking-log "~s" (list user-turn model-turn))
                     (flush-all-log-streams)
                     (setf conversation-history (append updated-history (list new-model-turn))))
