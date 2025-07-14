@@ -87,19 +87,19 @@
    JSOWN represents JSON objects as (:OBJ key1 val1 key2 val2 ...)."
   ;; Add a check for an 'error' key at the top level
   (cond (parsed-json
-         (if (jsown:keyp parsed-json "error")
-             (progn
-               (xlg :thinking-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
-               (xlgt :answer-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
-               nil)
-             (let* ((candidates (jsown:val parsed-json "candidates"))
-                    (first-candidate (car candidates)))
-               (when first-candidate
-                 (let* ((content (jsown:val first-candidate "content"))
-                        (parts (jsown:val content "parts"))
-                        (first-part (car parts)))
-                   (when first-part
-                     (jsown:val first-part "text")))))))
+          (if (jsown:keyp parsed-json "error")
+              (progn
+                (xlg :thinking-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
+                (xlgt :answer-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
+                nil)
+              (let* ((candidates (jsown:val parsed-json "candidates"))
+                     (first-candidate (car candidates)))
+                (when first-candidate
+                  (let* ((content (jsown:val first-candidate "content"))
+                         (parts (jsown:val content "parts"))
+                         (first-part (car parts)))
+                    (when first-part
+                      (jsown:val first-part "text")))))))
         (t (xlgt :answer-log "No parsed json available: ~a" parsed-json)
            "No parsed json available. Why?")))
 
@@ -137,7 +137,7 @@
                    (file-content (read-file-content file-path)))
               (if file-content
                   (progn
-                   (xlgt "~&File '~a' loaded. Enter an additional prompt for Gemini (optional):~%" file-path)
+                    (xlgt "~&File '~a' loaded. Enter an additional prompt for Gemini (optional):~%" file-path)
                     (let ((additional-prompt (read-line)))
                       (setf final-user-input (format nil "File content from ~a:~%```~a```~%~%My prompt: ~a"
                                                      file-path file-content additional-prompt))))
@@ -199,9 +199,9 @@
 
   (defun handle-gemini-turn-response (model-response-text parsed-json user-turn model-turn conversation-history &key (turn-type "turn"))
     "Handles the processing of a Gemini API response for a single turn,
-   logging the output and updating conversation history.
-   Returns (values updated-conversation-history t) on success,
-   or (values nil nil) on error, signaling the need for the caller to stop."
+    logging the output and updating conversation history.
+    Returns (values updated-conversation-history t) on success,
+    or (values nil nil) on error, signaling the need for the caller to stop."
     (if model-response-text
         (progn
           (xlgt :answer-log "~&Gemini: ~a" model-response-text)
@@ -217,14 +217,33 @@
           (values nil nil))))
 
 (defun gemini-top ()
-  (format nil "first ask is ~s" (format nil "~{~a ~}" (rest sb-ext:*posix-argv*)))
   (let ((cmd (rest sb-ext:*posix-argv*)))
     (when (first cmd)
       (setf *conversation-tag* (first cmd))
       (format t "conversation tag is: [~a]~%" *conversation-tag*))
     (if (rest cmd)
+        ;; If there are command-line arguments after the tag, treat them as the initial prompt
         (gemini-conversation (format nil "~{~a ~}" (rest cmd)) :tag *conversation-tag*)
-        (gemini-conversation (read-line) :tag *conversation-tag*))))
+        ;; If only the tag (or no args) is provided, prompt for file input first
+        (progn
+          (format t "~&Please enter the file path (e.g., /path/to/my/file.txt):~%")
+          (let* ((file-input (read-line))
+                 (file-path (if (and (> (length file-input) 0) (char= (char file-input 0) #\/))
+                                (subseq file-input 1) ; Remove leading '/'
+                                file-input))) ; If no '/', assume it's just the filename
+            (let ((file-content (read-file-content file-path)))
+              (if file-content
+                  (progn
+                    (format t "~&File '~a' loaded. Now, enter your instructions/question for Gemini about this file:~%" file-path)
+                    (let* ((user-instructions (read-line))
+                           ;; Construct the initial prompt with file content and user instructions
+                           (initial-prompt (format nil "File content from ~a:~%```~a```~%~%My instructions: ~a"
+                                                   file-path file-content user-instructions)))
+                      (gemini-conversation initial-prompt :tag *conversation-tag*)))
+                  (progn
+                    (format t "~&Error: Could not read file '~a'. Please enter your initial question for Gemini directly:~%" file-path)
+                    (gemini-conversation (read-line) :tag *conversation-tag*)))))))))
+
 
 (defun save-core ()
   (format t "building being ~a~%" (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
