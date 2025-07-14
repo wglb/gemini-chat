@@ -122,7 +122,7 @@
    Takes the current conversation history and model as input.
    Returns the final conversation history."
   (loop
-    (format t "~&~%Enter your next prompt (or type 'quit' to end):~%")
+    (xlgt :answer-log "~&~%Enter your next prompt (or type 'quit' to end):")
     (let ((next-prompt (read-line)))
       (when (string-equal next-prompt "quit")
         (format t "~&~%Ending conversation.~%")
@@ -131,14 +131,13 @@
         (return conversation-history))
 
       (let ((final-user-input next-prompt)) ; This will hold the text to send to Gemini
-
         ;; Check for file input (starts with '/')
         (if (and (> (length next-prompt) 0) (char= (char next-prompt 0) #\/))
             (let* ((file-path (subseq next-prompt 1))
                    (file-content (read-file-content file-path)))
               (if file-content
                   (progn
-                    (format t "~&File '~a' loaded. Enter an additional prompt for Gemini (optional):~%" file-path)
+                   (xlgt "~&File '~a' loaded. Enter an additional prompt for Gemini (optional):~%" file-path)
                     (let ((additional-prompt (read-line)))
                       (setf final-user-input (format nil "File content from ~a:~%```~a```~%~%My prompt: ~a"
                                                      file-path file-content additional-prompt))))
@@ -223,7 +222,9 @@
     (when (first cmd)
       (setf *conversation-tag* (first cmd))
       (format t "conversation tag is: [~a]~%" *conversation-tag*))
-    (gemini-conversation (format nil "~{~a ~}" (rest cmd)) :tag *conversation-tag*)))
+    (if (rest cmd)
+        (gemini-conversation (format nil "~{~a ~}" (rest cmd)) :tag *conversation-tag*)
+        (gemini-conversation (read-line) :tag *conversation-tag*))))
 
 (defun save-core ()
   (format t "building being ~a~%" (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))

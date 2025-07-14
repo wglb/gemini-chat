@@ -46,8 +46,9 @@ From the command line do
 
 gemini-chat tag First Prompt
 
-Where 'tag' is the prefix to the answer and the thinking file. These log
-files are date stamped.
+Where 'tag' is the prefix to the answer and the thinking file. These
+log files are date stamped. If there are words after the tag, they
+form the first chat with the gemini
 
 The "First Prompt" goes to gemini.
 
