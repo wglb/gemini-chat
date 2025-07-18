@@ -5,7 +5,8 @@
 
 (declaim (optimize (speed 0) (safety 3) (debug 3) (space 0)))
 
-(defparameter *conversation-tag* "chat")
+;; A default tag to use if none is provided on the command line.
+(defparameter *default-conversation-tag* "chat")
 
 (defun get-gemini-api-key ()
   "Retrieves the Gemini API key from the GEMINI_API_KEY environment variable.
@@ -44,7 +45,7 @@
    Returns the response stream if successful."
   (let* ((api-key (get-gemini-api-key))
          (api-url (format nil "https://generativelanguage.googleapis.com/v1beta/models/~a:generateContent?key=~a"
-                            model api-key))
+                          model api-key))
          ;; The top-level payload needs to be a JSON object with a "contents" key.
          ;; We must explicitly construct this using jsown:new-js to guarantee :OBJ format
          ;; and string keys for correct casing.
@@ -87,19 +88,19 @@
    JSOWN represents JSON objects as (:OBJ key1 val1 key2 val2 ...)."
   ;; Add a check for an 'error' key at the top level
   (cond (parsed-json
-          (if (jsown:keyp parsed-json "error")
-              (progn
-                (xlg :thinking-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
-                (xlgt :answer-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
-                nil)
-              (let* ((candidates (jsown:val parsed-json "candidates"))
-                     (first-candidate (car candidates)))
-                (when first-candidate
-                  (let* ((content (jsown:val first-candidate "content"))
-                         (parts (jsown:val content "parts"))
-                         (first-part (car parts)))
-                    (when first-part
-                      (jsown:val first-part "text")))))))
+           (if (jsown:keyp parsed-json "error")
+               (progn
+                 (xlg :thinking-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
+                 (xlgt :answer-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
+                 nil)
+               (let* ((candidates (jsown:val parsed-json "candidates"))
+                      (first-candidate (car candidates)))
+                 (when first-candidate
+                   (let* ((content (jsown:val first-candidate "content"))
+                          (parts (jsown:val content "parts"))
+                          (first-part (car parts)))
+                     (when first-part
+                       (jsown:val first-part "text")))))))
         (t (xlgt :answer-log "No parsed json available: ~a" parsed-json)
            "No parsed json available. Why?")))
 
@@ -164,7 +165,7 @@
                 (setf conversation-history new-total-history)
                 (return conversation-history))))))))
 
-(defun gemini-conversation (initial-prompt &key (model "gemini-2.5-pro") (tag "chat"))
+(defun gemini-conversation (initial-prompt &key (model "gemini-2.5-pro") (tag *default-conversation-tag*))
   "Starts and manages a multi-turn conversation with the Gemini API.
    Takes an initial prompt, then allows for follow-up questions.
    Returns the complete conversation history."
@@ -174,7 +175,7 @@
            (vermsg (format nil "begin, gemini-chat version ~a----------------------------------------" ver)))
       (xlg :answer-log vermsg)
       (xlg :thinking-log vermsg))
-    
+
     (let ((conversation-history nil))
 
       ;; First turn
@@ -216,39 +217,76 @@
           (flush-all-log-streams)
           (values nil nil))))
 
+;; Updated gemini-top function for robust command-line parsing
 (defun gemini-top ()
-  (let ((cmd (rest sb-ext:*posix-argv*)))
-    (when (first cmd)
-      (setf *conversation-tag* (first cmd))
-      (format t "conversation tag is: [~a]~%" *conversation-tag*))
-    (if (rest cmd)
-        ;; If there are command-line arguments after the tag, treat them as the initial prompt
-        (gemini-conversation (format nil "~{~a ~}" (rest cmd)) :tag *conversation-tag*)
-        ;; If only the tag (or no args) is provided, prompt for file input first
+  (let* ((all-args sb-ext:*posix-argv*)
+         (cmd-args (rest all-args)) ; Arguments after the executable name (e.g., "gemini-chat")
+         (tag *default-conversation-tag*) ; Start with default tag
+         (remaining-args nil)
+         (potential-file-path nil)
+         (initial-prompt-parts nil))
+
+    ;; 1. Determine the conversation tag and the actual prompt arguments
+    (if (and cmd-args                  ; Are there any arguments?
+             (not (uiop:file-exists-p (first cmd-args)))) ; Is the first argument *not* an existing file?
         (progn
-          (format t "~&Please enter the file path (e.g., /path/to/my/file.txt):~%")
-          (let* ((file-input (read-line))
-                 (file-path (if (and (> (length file-input) 0) (char= (char file-input 0) #\/))
-                                (subseq file-input 1) ; Remove leading '/'
-                                file-input))) ; If no '/', assume it's just the filename
-            (let ((file-content (read-file-content file-path)))
-              (if file-content
-                  (progn
-                    (format t "~&File '~a' loaded. Now, enter your instructions/question for Gemini about this file:~%" file-path)
-                    (let* ((user-instructions (read-line))
-                           ;; Construct the initial prompt with file content and user instructions
-                           (initial-prompt (format nil "File content from ~a:~%```~a```~%~%My instructions: ~a"
-                                                   file-path file-content user-instructions)))
-                      (gemini-conversation initial-prompt :tag *conversation-tag*)))
-                  (progn
-                    (format t "~&Error: Could not read file '~a'. Please enter your initial question for Gemini directly:~%" file-path)
-                    (gemini-conversation (read-line) :tag *conversation-tag*)))))))))
+          (setf tag (first cmd-args))
+          (setf remaining-args (rest cmd-args))) ; The rest are prompt args
+        (setf remaining-args cmd-args)) ; No tag specified, or first arg *is* a file, so all are prompt args (and tag remains default)
+
+    (format t "Conversation tag is: [~a]~%" tag)
+
+    ;; 2. Process the remaining arguments to identify file path and/or user prompt
+    (cond
+      ;; Case A: No prompt arguments on the command line (e.g., "gemini-chat" or "gemini-chat mytag")
+      ((null remaining-args)
+       (format t "~&Please enter your initial question or file path (e.g., /path/to/my/file.txt):~%")
+       (let* ((user-input (read-line))
+              ;; Remove leading '/' if user provides it for file path.
+              ;; This makes `uiop:file-exists-p` work correctly for relative paths too.
+              (parsed-input (if (and (> (length user-input) 0) (char= (char user-input 0) #\/))
+                                (subseq user-input 1)
+                                user-input)))
+         (if (uiop:file-exists-p parsed-input)
+             ;; User entered a file path interactively
+             (let ((file-content (read-file-content parsed-input)))
+               (if file-content
+                   (progn
+                     (format t "~&File '~a' loaded. Now, enter your instructions/question for Gemini about this file:~%" parsed-input)
+                     (let* ((user-instructions (read-line))
+                            (initial-prompt (format nil "File content from ~a:~%```~a```~%~%My instructions: ~a"
+                                                    parsed-input file-content user-instructions)))
+                       (gemini-conversation initial-prompt :tag tag)))
+                   (progn
+                     (format t "~&Error: Could not read file '~a'. Please enter your initial question for Gemini directly:~%" parsed-input)
+                     (gemini-conversation (read-line) :tag tag))))
+             ;; User entered a direct prompt interactively
+             (gemini-conversation user-input :tag tag))))
+
+      ;; Case B: First remaining argument is an existing file (e.g., "gemini-chat mytag /path/file.txt analyze this")
+      ((uiop:file-exists-p (first remaining-args))
+       (setf potential-file-path (first remaining-args))
+       (setf initial-prompt-parts (rest remaining-args)) ; The rest are user instructions
+       (let ((file-content (read-file-content potential-file-path)))
+         (if file-content
+             (let ((user-instructions (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" initial-prompt-parts))))
+               (gemini-conversation
+                (format nil "File content from ~a:~%```~a```~%~%My instructions: ~a"
+                        potential-file-path file-content user-instructions)
+                :tag tag))
+             (progn
+               (format t "~&Error: Could not read file '~a'. Proceeding with prompt only.~%" potential-file-path)
+               (gemini-conversation (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" initial-prompt-parts)) :tag tag)))))
+
+      ;; Case C: No file path detected, treat all remaining arguments as the direct prompt (e.g., "gemini-chat mytag just a prompt")
+      (t
+       (gemini-conversation (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" remaining-args)) :tag tag)))))
 
 
 (defun save-core ()
-  (format t "building being ~a~%" (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
+  (format t "Building gemini-chat version ~a~%" (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
   (sb-ext:save-lisp-and-die "gemini-chat"
                             :toplevel #'gemini-top
                             :save-runtime-options t
-                            :compression 22
+                            ;; :compression 22
                             :executable t))
