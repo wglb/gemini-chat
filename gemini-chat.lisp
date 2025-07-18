@@ -217,33 +217,33 @@
           (flush-all-log-streams)
           (values nil nil))))
 
-;; Updated gemini-top function for robust command-line parsing
+;; Updated gemini-top function for robust command-line parsing and log tag derivation
 (defun gemini-top ()
   (let* ((all-args sb-ext:*posix-argv*)
          (cmd-args (rest all-args)) ; Arguments after the executable name (e.g., "gemini-chat")
          (tag *default-conversation-tag*) ; Start with default tag
-         (remaining-args nil)
-         (potential-file-path nil)
-         (initial-prompt-parts nil))
+         (remaining-args nil)            ; These are the arguments that form the prompt or file path
+         (potential-file-path nil)       ; File path if detected as first *remaining-arg*
+         (initial-prompt-parts nil))     ; Parts of the text prompt
 
-    ;; 1. Determine the conversation tag and the actual prompt arguments
-    (if (and cmd-args                  ; Are there any arguments?
-             (not (uiop:file-exists-p (first cmd-args)))) ; Is the first argument *not* an existing file?
+    ;; 1. Determine the conversation tag and the initial set of "remaining arguments" (which include prompt and potentially file)
+    ;;    If the first cmd-arg is NOT a file, it's considered the tag.
+    ;;    Otherwise, all cmd-args are "remaining-args" and the tag remains default for now.
+    (if (and cmd-args
+             (not (uiop:file-exists-p (first cmd-args))))
         (progn
           (setf tag (first cmd-args))
-          (setf remaining-args (rest cmd-args))) ; The rest are prompt args
-        (setf remaining-args cmd-args)) ; No tag specified, or first arg *is* a file, so all are prompt args (and tag remains default)
+          (setf remaining-args (rest cmd-args)))
+        (setf remaining-args cmd-args)) ; All args are part of the prompt, tag is default initially
 
     (format t "Conversation tag is: [~a]~%" tag)
 
-    ;; 2. Process the remaining arguments to identify file path and/or user prompt
+    ;; 2. Process the 'remaining-args' to determine the actual initial prompt string for Gemini
     (cond
-      ;; Case A: No prompt arguments on the command line (e.g., "gemini-chat" or "gemini-chat mytag")
+      ;; Case A: No arguments left after tag (e.g., "gemini-chat" or "gemini-chat mytag")
       ((null remaining-args)
        (format t "~&Please enter your initial question or file path (e.g., /path/to/my/file.txt):~%")
        (let* ((user-input (read-line))
-              ;; Remove leading '/' if user provides it for file path.
-              ;; This makes `uiop:file-exists-p` work correctly for relative paths too.
               (parsed-input (if (and (> (length user-input) 0) (char= (char user-input 0) #\/))
                                 (subseq user-input 1)
                                 user-input)))
@@ -256,31 +256,38 @@
                      (let* ((user-instructions (read-line))
                             (initial-prompt (format nil "File content from ~a:~%```~a```~%~%My instructions: ~a"
                                                     parsed-input file-content user-instructions)))
-                       (gemini-conversation initial-prompt :tag tag)))
+                       (gemini-conversation initial-prompt :tag tag))) ; Pass the determined tag
                    (progn
                      (format t "~&Error: Could not read file '~a'. Please enter your initial question for Gemini directly:~%" parsed-input)
-                     (gemini-conversation (read-line) :tag tag))))
+                     (gemini-conversation (read-line) :tag tag)))) ; Pass the determined tag
              ;; User entered a direct prompt interactively
-             (gemini-conversation user-input :tag tag))))
+             (gemini-conversation user-input :tag tag)))) ; Pass the determined tag
 
-      ;; Case B: First remaining argument is an existing file (e.g., "gemini-chat mytag /path/file.txt analyze this")
+      ;; Case B: First of 'remaining-args' is an existing file (e.g., "gemini-chat /path/file.txt analyze this"
+      ;;         OR "gemini-chat mytag /path/file.txt analyze this")
       ((uiop:file-exists-p (first remaining-args))
        (setf potential-file-path (first remaining-args))
        (setf initial-prompt-parts (rest remaining-args)) ; The rest are user instructions
+
+       ;; If tag is still default (meaning first actual command-line arg was a file, no explicit tag)
+       ;; then derive tag from the filename.
+       (when (string-equal tag *default-conversation-tag*)
+           (setf tag (pathname-name (parse-namestring potential-file-path))))
+
        (let ((file-content (read-file-content potential-file-path)))
          (if file-content
              (let ((user-instructions (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" initial-prompt-parts))))
                (gemini-conversation
                 (format nil "File content from ~a:~%```~a```~%~%My instructions: ~a"
                         potential-file-path file-content user-instructions)
-                :tag tag))
+                :tag tag)) ; Pass the (potentially derived) tag
              (progn
                (format t "~&Error: Could not read file '~a'. Proceeding with prompt only.~%" potential-file-path)
-               (gemini-conversation (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" initial-prompt-parts)) :tag tag)))))
+               (gemini-conversation (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" initial-prompt-parts)) :tag tag))))) ; Pass the (potentially derived) tag
 
-      ;; Case C: No file path detected, treat all remaining arguments as the direct prompt (e.g., "gemini-chat mytag just a prompt")
+      ;; Case C: No file path detected, treat all 'remaining-args' as the direct prompt
       (t
-       (gemini-conversation (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" remaining-args)) :tag tag)))))
+       (gemini-conversation (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" remaining-args)) :tag tag))))) ; Pass the determined tag
 
 
 (defun save-core ()
@@ -288,5 +295,5 @@
   (sb-ext:save-lisp-and-die "gemini-chat"
                             :toplevel #'gemini-top
                             :save-runtime-options t
-                            ;; :compression 22
+                            :compression 22
                             :executable t))
