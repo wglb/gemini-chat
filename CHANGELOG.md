@@ -5,7 +5,7 @@ Version 1.2.3 - 2025-07-18
 This patch release corrects a subtle but important error in how command-line arguments were processed, ensuring proper handling of command-line arguments.
 
 Bug Fixes
-Corrected Command-Line Argument Access: Fixed an issue where sb-ext:*posix-argv* was incorrectly invoked as a function. It is now correctly accessed as a special variable, ensuring that command-line arguments are parsed as intended. This resolves a potential runtime error when the executable starts up.
+Fixed an issue where sb-ext:*posix-argv* was incorrectly invoked as a function. It is now correctly accessed as a special variable, ensuring that command-line arguments are parsed as intended. 
 
 ### Version 1..2 - 2025-07-18
 
