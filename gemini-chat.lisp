@@ -250,6 +250,7 @@
          (if (uiop:file-exists-p parsed-input)
              ;; User entered a file path interactively
              (let ((file-content (read-file-content parsed-input)))
+               (setf tag parsed-input)
                (if file-content
                    (progn
                      (format t "~&File '~a' loaded. Now, enter your instructions/question for Gemini about this file:~%" parsed-input)
