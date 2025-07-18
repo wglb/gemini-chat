@@ -219,7 +219,7 @@
 
 ;; Updated gemini-top function for robust command-line parsing and log tag derivation
 (defun gemini-top ()
-  (let* ((all-args sb-ext:*posix-argv*)
+  (let* ((all-args sb-ext:*posix-argv*) ; Corrected: Accessing the variable directly
          (cmd-args (rest all-args)) ; Arguments after the executable name (e.g., "gemini-chat")
          (tag *default-conversation-tag*) ; Start with default tag
          (remaining-args nil)            ; These are the arguments that form the prompt or file path
@@ -288,7 +288,6 @@
       ;; Case C: No file path detected, treat all 'remaining-args' as the direct prompt
       (t
        (gemini-conversation (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" remaining-args)) :tag tag))))) ; Pass the determined tag
-
 
 (defun save-core ()
   (format t "Building gemini-chat version ~a~%" (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
