@@ -15,7 +15,7 @@
 (defun get-gemini-api-key ()
   "Retrieves the Gemini API key from the GEMINI_API_KEY environment variable.
    Signals an error if the environment variable is not set.
-   It first tries GEMINI_API-KEY, then falls back to _GEMINI_API_KEY_."
+   It first tries GEMINI_API_KEY, then falls back to _GEMINI_API_KEY_."
   (let ((key (or (getenv "GEMINI_API_KEY")
                  (getenv "_GEMINI_API_KEY_"))))
     (unless key
@@ -178,10 +178,7 @@
 
 (defun handle-gemini-interaction (user-prompt conversation-history model)
   "Handles sending a user prompt to Gemini, getting a response, and updating history.
-   Returns (values new-conversation-history success-p).
-   The 'tag' parameter has been definitively removed from its signature as it's not needed
-   for the core API interaction or history management within this function.
-   Logging functions (xlg, xlgt) implicitly use the global log streams set up by gemini-conversation."
+   Returns (values new-conversation-history success-p)."
   (xlg :thinking-log "~&User: ~a" user-prompt)
   (xlgt :answer-log "User: ~a" user-prompt)
 
@@ -193,71 +190,6 @@
          (new-model-turn (create-message-turn "model" (or model-response-text "Error: No response"))))
 
     (handle-gemini-turn-response model-response-text parsed-json new-user-turn new-model-turn updated-history :turn-type "follow-up turn")))
-
-(defun process-and-send-prompt (processed-prompt conversation-history model)
-  "Processes a valid user prompt (which may include file content) and interacts with Gemini.
-   Returns (values new-history success-p).
-   The 'tag' parameter has been removed from this function's signature as it is not used
-   internally nor passed to `handle-gemini-interaction`.
-   The `tag` is handled at the `gemini-chat-loop` and `gemini-conversation` levels for
-   managing log file names and the runtime output stream."
-  (handle-gemini-interaction processed-prompt conversation-history model))
-
-(defun gemini-conversation (initial-prompt &key (model "gemini-2.5-pro") (tag *default-conversation-tag*))
-  "Starts and manages a multi-turn conversation with the Gemini API.
-   Takes an initial prompt, then allows for follow-up questions.
-   Returns the complete conversation history."
-  (with-open-log-files ((:answer-log (format nil "~a-the-answer.log" tag) :ymd)
-                        (:thinking-log (format nil "~a-thinking.log" tag) :ymd))
-    (let* ((ver (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
-           (vermsg (format nil "begin, gemini-chat version ~a----------------------------------------" ver)))
-      (xlg :answer-log vermsg)
-      (xlg :thinking-log vermsg))
-
-    (let ((conversation-history nil))
-
-      ;; First turn (initial prompt) - Corrected call: removed 'tag' as argument
-      (multiple-value-bind (new-history success)
-          (handle-gemini-interaction initial-prompt conversation-history model)
-        (if success
-            (setf conversation-history new-history)
-            (return-from gemini-conversation nil)))
-
-      ;; If the initial turn was successful, proceed to the interactive loop
-      (when conversation-history
-        ;; gemini-chat-loop still needs 'tag' to pass to handle-save-command
-        (setf conversation-history (gemini-chat-loop conversation-history model tag)))
-      conversation-history)))
-
-;; The definition of gemini-chat-loop also needs to reflect the change
-;; in the arguments it passes to process-and-send-prompt
-(defun gemini-chat-loop (conversation-history model tag)
-  "Manages the interactive follow-up turns of a Gemini conversation.
-   Takes the current conversation history, model, and tag as input.
-   Returns the final conversation history."
-  (loop
-    (xlgt :answer-log "~&~%Enter your next prompt (or type 'quit' to end, ':save <filename>' to save output):")
-    (let ((raw-user-input (read-line)))
-
-      (multiple-value-bind (command-type command-data)
-          (read-user-command raw-user-input)
-        (ecase command-type
-          (:quit
-           (handle-quit-command)
-           (return conversation-history)) ; Exit loop and return history
-          (:save
-           (handle-save-command command-data tag) ; command-data is the full ":save <filename>" string
-           (continue)) ; Continue to next loop iteration
-          (:prompt
-           (multiple-value-bind (new-total-history success)
-               ;; Corrected call: removed 'tag' as argument to process-and-send-prompt
-               (process-and-send-prompt command-data conversation-history model)
-             (if success
-                 (setf conversation-history new-total-history)
-                 (return conversation-history)))) ; Return history on error
-          (:error
-           (format t "~&Skipping turn due to input error.~%")
-           (continue)))))))
 
 (defun handle-gemini-turn-response (model-response-text parsed-json user-turn model-turn conversation-history &key (turn-type "turn"))
   "Handles the processing of a Gemini API response for a single turn,
@@ -285,7 +217,7 @@
         (flush-all-log-streams)
         (values nil nil))))
 
-;; New helper functions for gemini-chat-loop refactoring
+;; Helper functions for gemini-chat-loop refactoring
 (defun handle-quit-command ()
   "Performs cleanup when the 'quit' command is issued."
   (format t "~&~%Ending conversation.~%")
@@ -311,108 +243,182 @@
            (values :error nil)
            (values :prompt processed-prompt))))))
 
-;; Updated gemini-top function for robust command-line parsing and log tag derivation
-(defun gemini-top ()
-  (let* ((all-args sb-ext:*posix-argv*) ; Corrected: Accessing the variable directly
-         (cmd-args (rest all-args)) ; Arguments after the executable name (e.g., "gemini-chat")
-         (tag *default-conversation-tag*) ; Start with default tag
-         (context-files nil)             ; New: List to store context file paths
-         (remaining-args nil)            ; These are the arguments that form the prompt or file path
-         (potential-file-path nil)       ; File path if detected as first *remaining-arg*
-         (initial-prompt-parts nil))     ; Parts of the text prompt
+(defun process-and-send-prompt (processed-prompt conversation-history model)
+  "Processes a valid user prompt (which may include file content) and interacts with Gemini.
+   Returns (values new-history success-p)."
+  (handle-gemini-interaction processed-prompt conversation-history model))
 
-    ;; Parse command-line arguments for tag, context files, and initial prompt/file
-    (loop while cmd-args do
-      (let ((arg (pop cmd-args)))
+
+(defun gemini-chat-loop (conversation-history model tag)
+  "Manages the interactive follow-up turns of a Gemini conversation.
+   Takes the current conversation history, model, and tag as input.
+   Returns the final conversation history."
+  (loop
+    (xlgt :answer-log "~&~%Enter your next prompt (or type 'quit' to end, ':save <filename>' to save output):")
+    (let ((raw-user-input (read-line)))
+
+      (multiple-value-bind (command-type command-data)
+          (read-user-command raw-user-input)
+        (ecase command-type
+          (:quit
+           (handle-quit-command)
+           (return conversation-history)) ; Exit loop and return history
+          (:save
+           (handle-save-command command-data tag) ; command-data is the full ":save <filename>" string
+           (continue)) ; Continue to next loop iteration
+          (:prompt
+           (multiple-value-bind (new-total-history success)
+               (process-and-send-prompt command-data conversation-history model)
+             (if success
+                 (setf conversation-history new-total-history)
+                 (return conversation-history)))) ; Return history on error
+          (:error
+           (format t "~&Skipping turn due to input error.~%")
+           (continue)))))))
+
+
+(defun gemini-conversation (initial-prompt &key (model "gemini-2.5-pro") (tag *default-conversation-tag*))
+  "Starts and manages a multi-turn conversation with the Gemini API.
+   Takes an initial prompt, then allows for follow-up questions.
+   Returns the complete conversation history."
+  (with-open-log-files ((:answer-log (format nil "~a-the-answer.log" tag) :ymd)
+                        (:thinking-log (format nil "~a-thinking.log" tag) :ymd))
+    (let* ((ver (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
+           (vermsg (format nil "begin, gemini-chat version ~a----------------------------------------" ver)))
+      (xlg :answer-log vermsg)
+      (xlg :thinking-log vermsg))
+
+    (let ((conversation-history nil))
+
+      ;; First turn (initial prompt)
+      (multiple-value-bind (new-history success)
+          (handle-gemini-interaction initial-prompt conversation-history model)
+        (if success
+            (setf conversation-history new-history)
+            (return-from gemini-conversation nil)))
+
+      ;; If the initial turn was successful, proceed to the interactive loop
+      (when conversation-history
+        (setf conversation-history (gemini-chat-loop conversation-history model tag)))
+      conversation-history)))
+
+
+;; --- New functions for refactored gemini-top ---
+
+(defun process-cli-arguments (args)
+  "Processes command-line arguments.
+   Returns (values explicit-tag context-files prompt-arg-list).
+   'explicit-tag' is the tag provided directly on the command line (e.g., 'my-chat-tag').
+   'context-files' is a list of file paths specified with -c or --context.
+   'prompt-arg-list' is a list of strings forming the raw initial prompt,
+   which might include a file path as its first element if provided directly."
+  (let ((explicit-tag nil)
+        (context-files nil)
+        (prompt-arg-list nil)
+        (remaining-args args))
+    (loop while remaining-args do
+      (let ((arg (pop remaining-args)))
         (cond
-          ((string= arg "-c")
-           (unless cmd-args
-             (error "Error: -c option requires a file path."))
-           (push (pop cmd-args) context-files))
-          ((string= arg "--context")
-           (unless cmd-args
-             (error "Error: --context option requires a file path."))
-           (push (pop cmd-args) context-files))
+          ((or (string= arg "-c") (string= arg "--context"))
+           (unless remaining-args
+             (error "Error: ~a option requires a file path." arg))
+           (push (pop remaining-args) context-files))
           (t
-           ;; Once we hit a non-option arg, the rest are part of the prompt or a file
-           (push arg remaining-args)
-           (setf remaining-args (nconc (nreverse remaining-args) cmd-args)) ; Add remaining args
-           (setf cmd-args nil))))) ; Clear cmd-args to exit loop
+           ;; If we find a non-option argument, assume it's part of the prompt
+           ;; or a tag if not already set and it doesn't look like a file path.
+           (if (and (not explicit-tag)
+                    (not (uiop:file-exists-p arg))
+                    (not (string-starts-with-p arg "/")))
+               (setf explicit-tag arg)
+               (push arg prompt-arg-list))
+           ;; All subsequent arguments are also considered part of the prompt
+           (setf prompt-arg-list (nconc (nreverse prompt-arg-list) remaining-args))
+           (setf remaining-args nil))))) ; Clear to exit loop
+    (values explicit-tag (nreverse context-files) (nreverse prompt-arg-list))))
 
-    (setf context-files (nreverse context-files)) ; Restore original order
 
-    ;; 1. Determine the conversation tag and the initial set of "remaining arguments"
-    ;;    If the first non-option cmd-arg is NOT a file, it's considered the tag.
-    ;;    Otherwise, all non-option cmd-args are "remaining-args" and the tag remains default for now.
-    (if (and remaining-args
-             (not (uiop:file-exists-p (first remaining-args))))
-        (progn
-          (setf tag (first remaining-args))
-          (setf remaining-args (rest remaining-args)))
-        ;; If no explicit tag and the first arg is a file, tag will be derived from it later.
-        ;; If no explicit tag and no file, tag remains default "chat".
-        )
+(defun assemble-initial-prompt (prompt-components context-content tag-from-cli)
+  "Assembles the final initial prompt string for Gemini and determines the conversation tag.
+   'prompt-components' are raw parts from CLI.
+   'context-content' is the combined text from context files.
+   'tag-from-cli' is the tag explicitly provided via CLI, or *default-conversation-tag*.
+   Returns (values final-prompt-string new-tag) or (values nil nil) on error."
+  (let ((final-prompt nil)
+        (derived-tag tag-from-cli))
 
-    (format t "Conversation tag is: [~a]~%" tag)
-
-    ;; Process context files
-    (let ((context-content (process-context-files context-files)))
-      (when context-content
-        (format t "~&Loaded content from context files.~%")
-        (xlgt :answer-log "~&Loaded content from context files.~%")
-        (setf initial-prompt-parts (cons context-content initial-prompt-parts)))
-
-      ;; 2. Process the 'remaining-args' to determine the actual initial prompt string for Gemini
-      (cond
-        ;; Case A: No arguments left after tag (e.g., "gemini-chat" or "gemini-chat mytag")
-        ((null remaining-args)
-         (format t "~&Please enter your initial question or file path (e.g., /path/to/my/file.txt):~%")
-         (let* ((user-input (read-line)))
-           (multiple-value-bind (processed-input error-type)
-               (process-user-prompt-and-file user-input)
-             (if error-type
-                 (progn
-                   (format t "~&Initial prompt error, cannot proceed. Please restart.~%")
-                   (return-from gemini-top nil))
-                 (progn
-                   ;; Derive tag from file if still default (if user input was a file)
-                   (when (and (string-equal tag *default-conversation-tag*)
-                              (char= (char user-input 0) #\/))
-                     (setf tag (pathname-name (parse-namestring (subseq user-input 1)))))
-                   (gemini-conversation (format nil "~a~%~{~a~}" processed-input initial-prompt-parts) :tag tag))))))
-
-        ;; Case B: First of 'remaining-args' is an existing file (e.g., "gemini-chat /path/file.txt analyze this"
-        ;;         OR "gemini-chat mytag /path/file.txt analyze this")
-        ((uiop:file-exists-p (first remaining-args))
-         (setf potential-file-path (first remaining-args))
-         (setf initial-prompt-parts (append initial-prompt-parts (rest remaining-args))) ; The rest are user instructions
-
-         ;; If tag is still default (meaning first actual command-line arg was a file, no explicit tag)
-         ;; then derive tag from the filename.
-         (when (string-equal tag *default-conversation-tag*)
-             (setf tag (pathname-name (parse-namestring potential-file-path))))
-
-         (let ((file-content (read-file-content potential-file-path)))
-           (if file-content
-               (let ((user-instructions (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" initial-prompt-parts))))
-                 (gemini-conversation
-                  (format nil "File content from ~a:~%```~a```~%~%My instructions: ~a"
-                          potential-file-path file-content user-instructions)
-                  :tag tag))
+    (cond
+      ;; Case 1: No command-line prompt components, prompt the user interactively
+      ((null prompt-components)
+       (format t "~&Please enter your initial question or file path (e.g., /path/to/my/file.txt):~%")
+       (let* ((user-input (read-line)))
+         (multiple-value-bind (processed-input error-type)
+             (process-user-prompt-and-file user-input)
+           (if error-type
+               (return-from assemble-initial-prompt (values nil nil)) ; Error, no prompt
                (progn
-                 (format t "~&Error: Could not read file '~a'. Proceeding with prompt only.~%" potential-file-path)
-                 (gemini-conversation (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" initial-prompt-parts)) :tag tag)))))
+                 ;; Derive tag from file if still default (if user input was a file path)
+                 (when (and (string-equal derived-tag *default-conversation-tag*)
+                            (char= (char user-input 0) #\/))
+                   (let ((pathname (parse-namestring (subseq user-input 1))))
+                     (when (pathname-name pathname) ; Ensure it has a name before deriving
+                       (setf derived-tag (pathname-name pathname)))))
+                 (setf final-prompt (format nil "~a~%~a" processed-input (or context-content ""))))))))
 
-        ;; Case C: No file path detected, treat all 'remaining-args' as the direct prompt
-        (t
-         (setf initial-prompt-parts (append initial-prompt-parts remaining-args))
-         (gemini-conversation (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" initial-prompt-parts)) :tag tag))))))
+      ;; Case 2: First component is an existing file path (from CLI)
+      ((uiop:file-exists-p (first prompt-components))
+       (let* ((file-path (first prompt-components))
+              (file-content (read-file-content file-path)))
+         (if file-content
+             (progn
+               ;; Derive tag from file if still default (from CLI)
+               (when (string-equal derived-tag *default-conversation-tag*)
+                   (setf derived-tag (pathname-name (parse-namestring file-path))))
+               (let ((user-instructions (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" (rest prompt-components)))))
+                 (setf final-prompt
+                       (format nil "~a~%File content from ~a:~%```~a```~%~%My instructions: ~a"
+                               (or context-content "") file-path file-content user-instructions))))
+             (progn
+               (format t "~&Error: Could not read file '~a'. Proceeding with prompt only.~%" file-path)
+               (setf final-prompt (string-trim '(#\Space #\Newline #\Tab) (format nil "~a~%~{~a ~}" (or context-content "") (rest prompt-components))))))))
 
+      ;; Case 3: All components are direct prompt text (from CLI)
+      (t
+       (setf final-prompt (string-trim '(#\Space #\Newline #\Tab) (format nil "~a~%~{~a ~}" (or context-content "") prompt-components)))))
+
+    (values final-prompt derived-tag)))
+
+
+(defun start-gemini-session (initial-prompt tag &key (model "gemini-2.5-pro"))
+  "Initiates the Gemini conversation with the assembled initial prompt and tag."
+  (format t "Conversation tag is: [~a]~%" tag)
+  (gemini-conversation initial-prompt :model model :tag tag))
+
+
+(defun gemini-top ()
+  "Main entry point for the gemini-chat application.
+   Handles command-line argument parsing, initial prompt assembly, and starting the chat session."
+  (let* ((all-args sb-ext:*posix-argv*)
+         (cmd-args (rest all-args))) ; Skip the executable name itself
+
+    (multiple-value-bind (explicit-tag context-files prompt-components)
+        (process-cli-arguments cmd-args)
+
+      (let* ((actual-tag (or explicit-tag *default-conversation-tag*))
+             (context-content (process-context-files context-files)))
+
+        (multiple-value-bind (final-prompt derived-tag)
+            (assemble-initial-prompt prompt-components context-content actual-tag)
+          (unless final-prompt
+            (format t "~&Initial prompt generation failed. Exiting.~%")
+            (return-from gemini-top nil))
+
+          (start-gemini-session final-prompt (or derived-tag actual-tag)))))))
 
 (defun save-core ()
+  "Saves the current Lisp image as an executable."
   (format t "Building gemini-chat version ~a~%" (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
   (sb-ext:save-lisp-and-die "gemini-chat"
                             :toplevel #'gemini-top
                             :save-runtime-options t
-                            ;; :compression 22
+                            :compression 22
                             :executable t))
