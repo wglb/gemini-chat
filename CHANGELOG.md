@@ -1,6 +1,19 @@
 ---
 ## CHANGELOG.md
 ---
+
+## Version 1.3.6 - 2025-07-19
+
+### Added
+* **Command-line help option**: Introduced `-h` or `--help` to display detailed usage instructions and examples, then exit.
+
+### Changed
+* **Refactored `top` and `run-chat` functions**:
+    * The main application logic has been moved from `top` to a new function called `run-chat`.
+    * `top` now serves as a slim wrapper for `run-chat`, specifically designed for the compiled executable's entry point.
+    * `run-chat` can now be called directly from a **SLIME session** or other Lisp code, accepting arguments either as a single list or as multiple, separate arguments, providing greater flexibility for scripting and testing.
+
+---
 ## Version 1.3.2 - 2025-07-19
 
 ### Refactoring & Modularity

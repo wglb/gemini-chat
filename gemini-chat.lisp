@@ -441,18 +441,25 @@
   (format t "Conversation tag is: [~a]~%" tag)
   (gem-conv init-prompt :model model :tag tag))
 
-(defun top ()
-  "Main entry point for the gemini-chat application.
-   Handles command-line argument parsing, initial prompt assembly, and starting the chat session."
-  (let* ((all-args sb-ext:*posix-argv*)
-         (cmd-args (rest all-args)))
+(defun run-chat (&rest raw-args)
+  "Main entry point for the gemini-chat application when invoked with arguments.
+   Handles command-line argument parsing, initial prompt assembly, and starting the chat session.
+   This function can be called directly from a SLIME session with:
+   - a single list of arguments: (gemini-chat:run-chat '(\"-c\" \"my_context.txt\" \":save\" \"output.txt\" \"/path/to/my_input.txt\"))
+   - multiple arguments: (gemini-chat:run-chat \"-c\" \"my_context.txt\" \":save\" \"output.txt\" \"/path/to/my_input.txt\")"
+  (let ((cmd-args
+          ;; If run-chat was called with a single list as its argument (common from (rest sb-ext:*posix-argv*)),
+          ;; unwrap it. Otherwise, use raw-args as is.
+          (if (and (consp raw-args) (listp (car raw-args)))
+              (car raw-args)
+              raw-args)))
 
     (multiple-value-bind (expl-tag ctx-files prompt-comps help-req-p)
         (cli-args cmd-args)
 
       (when help-req-p
         (print-help)
-        (uiop:quit 0)) ; Exit after printing help
+        (uiop:quit 0))
 
       (let* ((actual-tag (or expl-tag *d-tag*))
              (ctx-content (proc-ctx-files ctx-files)))
@@ -461,9 +468,14 @@
             (initial-prompt prompt-comps ctx-content actual-tag)
           (unless f-prompt
             (format t "~&Initial prompt generation failed. Exiting.~%")
-            (return-from top nil))
+            (return-from run-chat nil))
 
           (start-chat f-prompt (or d-tag actual-tag)))))))
+
+(defun top ()
+  "Toplevel function for the compiled gemini-chat executable.
+   It retrieves arguments from sb-ext:*posix-argv* and passes them to run-chat."
+  (run-chat (rest sb-ext:*posix-argv*)))
 
 (defun save-core ()
   "Saves the current Lisp image as an executable."
@@ -471,5 +483,5 @@
   (sb-ext:save-lisp-and-die "gemini-chat"
                             :toplevel #'top
                             :save-runtime-options t
-                            ;; :compression 22
+                            :compression 22
                             :executable t))
