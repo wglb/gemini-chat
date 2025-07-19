@@ -1,10 +1,25 @@
 ---
 ## CHANGELOG.md
-
 ---
-## CHANGELOG.md
+## Version 1.3.2 - 2025-07-19
 
-Here's the changelog.me entry for version 1.3.2, Bill, detailing the recent structural improvements and bug fixes:
+### Refactoring & Modularity
+- The **`gemini-top` function has been significantly refactored** for improved modularity and clarity.
+    - Introduced `process-cli-arguments` to handle parsing command-line arguments, extracting options like context files and the initial prompt components.
+    - Introduced `assemble-initial-prompt` to handle the logic for constructing the final initial prompt string, including processing file inputs and interactive prompts if no command-line input is provided. This function also now intelligently derives the conversation tag from input filenames when no explicit tag is given.
+    - Introduced `start-gemini-session` as a dedicated function to initiate the Gemini conversation once the prompt and tag are ready.
+    - `gemini-top` now serves as a high-level orchestrator, coordinating calls to these new, specialized helper functions.
+- The **`gemini-chat-loop` function was also refactored** for better command handling.
+    - Introduced `read-user-command` to centralize the parsing of user input (e.g., 'quit', ':save', or a regular prompt).
+    - Added `handle-quit-command` to encapsulate shutdown procedures for a cleaner exit.
+    - Created `process-and-send-prompt` to streamline the logic for processing user prompts (including file content) and interacting with the Gemini API for a single turn.
+    - The main `gemini-chat-loop` now acts primarily as a dispatcher, calling appropriate helper functions based on user input.
+
+### Bug Fixes
+- Resolved an issue where the **`tag` variable was being incorrectly passed** to `handle-gemini-interaction`, leading to argument count mismatches and unused variable warnings during compilation.
+    - `handle-gemini-interaction` no longer accepts `tag` as a parameter, as it was not utilized internally.
+    - Updated all call sites for `handle-gemini-interaction` (specifically in `gemini-conversation` and the new `process-and-send-prompt`) to correctly pass only the required three arguments.
+    - Eliminated an unused `tag` parameter from `process-and-send-prompt`'s definition, resolving a compilation warning.
 
 ## Version 1.3.2 - 2025-07-19
 
@@ -41,7 +56,7 @@ Version 1.2.3 - 2025-07-18
 This patch release corrects a subtle but important error in how command-line arguments were processed, ensuring proper handling of command-line arguments.
 
 Bug Fixes
-Fixed an issue where sb-ext:*posix-argv* was incorrectly invoked as a function. It is now correctly accessed as a special variable, ensuring that command-line arguments are parsed as intended. 
+Fixed an issue where sb-ext:*posix-argv* was incorrectly invoked as a function. It is now correctly accessed as a special variable, ensuring that command-line arguments are parsed as intended.
 
 ### Version 1..2 - 2025-07-18
 
