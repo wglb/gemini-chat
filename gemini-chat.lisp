@@ -214,7 +214,7 @@
         (flush-all-log-streams)
         (values nil nil))))
 
-;; Helper functions for gemini-chat-loop refactoring
+;; Helper functions for chat-loop refactoring
 (defun quit-cmd ()
   "Performs cleanup when the 'quit' command is issued."
   (format t "~&~%Ending conversation.~%")
@@ -302,20 +302,78 @@
 
 ;; --- New functions for refactored top ---
 
+(defun print-help ()
+  "Prints the command-line help message and example usage."
+  (format t "~&Usage: ./gemini-chat [options] [tag] [initial_prompt | /path/to/file.txt]~%~%")
+  (format t "Options:~%")
+  (format t "  -h, --help            Show this help message and exit.~%")
+  (format t "  -c, --context <file>  Specify a file to be included as initial context.~%~%")
+  (format t "Interactive Commands (during chat loop):~%")
+  (format t "  :save <filename>      Start or change saving model responses to the specified file.~%")
+  (format t "  quit                  End the conversation.~%~%")
+  (format t "Initial Prompt Options:~%")
+  (format t "  If no initial prompt or file is given, the program will prompt you interactively.~%")
+  (format t "  If the first argument is a path starting with '/', the file content will be loaded as the initial input.~%")
+  (format t "  Otherwise, all subsequent arguments are treated as the initial prompt text.~%~%")
+
+  (format t "---~%~%")
+  (format t "## Example Flow:~%~%")
+  (format t "To use the `gemini-chat` program with an input file, a context file, a defined output file, and chat input that references the input file, you'd use a command like this:~%~%")
+  (format t "```bash~%")
+  (format t "./gemini-chat -c your_context_file.txt :save my_output.txt /path/to/your_input_file.txt \"Please summarize the content of the attached file and then answer my questions.\"~%")
+  (format t "```~%~%")
+  (format t "Let's break down the components of that command:~%~%")
+  (format t "* **`./gemini-chat`**: This is how you'd typically execute the compiled program.~%")
+  (format t "* **`-c your_context_file.txt`** (or `--context your_context_file.txt`):~%")
+  (format t "    * `:-c` or `--context` is the option to specify a **context file**.~%")
+  (format t "    * `your_context_file.txt` is the path to the file whose content you want to provide as additional context to the Gemini model before it processes your main prompt. This is useful for providing background information, specific guidelines, or data that isn't directly part of your immediate query but should influence the model's response.~%")
+  (format t "* **`:save my_output.txt`**:~%")
+  (format t "    * `::save` is a special command *within* `gemini-chat` that tells it to direct the model's responses to a file.~%")
+  (format t "    * `my_output.txt` is the name of the file where the conversation's output will be saved. The program will open this file and append Gemini's responses to it.~%")
+  (format t "* **`/path/to/your_input_file.txt`**:~%")
+  (format t "    * When the first non-option argument on the command line starts with a `/` (indicating a file path), `gemini-chat` will read this file's content. This becomes the primary 'input file' for the current turn.~%")
+  (format t "    * The `gemini-chat` program will then prompt you for an **additional prompt** that will accompany the file content.~%")
+  (format t "* **`\"Please summarize the content of the attached file and then answer my questions.\"`**:~%")
+  (format t "    * This is the **chat input** you'd type after `gemini-chat` prompts you, following the reading of `/path/to/your_input_file.txt`.~%")
+  (format t "    * This is where you provide instructions or questions *related to the content of the input file*.~%~%")
+  (format t "---~%~%")
+  (format t "### Example Flow:~%~%")
+  (format t "1.  You run the command:~%    ```bash~%")
+  (format t "    ./gemini-chat -c my_project_docs.txt :save session_log.txt /home/bill/data/quarterly_report.csv~%")
+  (format t "    ```~%")
+  (format t "2.  `gemini-chat` processes `my_project_docs.txt` as context.~%")
+  (format t "3.  It sets up `session_log.txt` to save the output.~%")
+  (format t "4.  It reads `/home/bill/data/quarterly_report.csv`.~%")
+  (format t "5.  You then see a prompt like:~%    ```~%")
+  (format t "    File '/home/bill/data/quarterly_report.csv' loaded. Enter an additional prompt for Gemini (optional):~%")
+  (format t "    ```~%")
+  (format t "6.  You would type:~%    ```~%")
+  (format t "    Based on the report, what were the key revenue drivers and what challenges are highlighted?~%")
+  (format t "    ```~%")
+  (format t "7.  `gemini-chat` combines the context from `my_project_docs.txt`, the content of `quarterly_report.csv`, and your \"key revenue drivers\" prompt, sends it to Gemini, and logs the response to `session_log.txt` (and displays it to you).~%")
+  (format t "---~%~%")
+  (format t "Report any issues or suggestions!")
+  (finish-output))
+
 (defun cli-args (args)
   "Processes command-line arguments.
-   Returns (values explicit-tag context-files prompt-arg-list).
+   Returns (values explicit-tag context-files prompt-arg-list help-requested-p).
    'explicit-tag' is the tag provided directly on the command line (e.g., 'my-chat-tag').
    'context-files' is a list of file paths specified with -c or --context.
    'prompt-arg-list' is a list of strings forming the raw initial prompt,
-   which might include a file path as its first element if provided directly."
+   which might include a file path as its first element if provided directly.
+   'help-requested-p' is T if -h or --help was found."
   (let ((expl-tag nil)
         (ctx-files nil)
         (prompt-arg-l nil)
+        (help-req-p nil)
         (rem-args args))
     (loop while rem-args do
       (let ((arg (pop rem-args)))
         (cond
+          ((or (string= arg "-h") (string= arg "--help"))
+           (setf help-req-p t)
+           (setf rem-args nil)) ; Stop processing if help is requested
           ((or (string= arg "-c") (string= arg "--context"))
            (unless rem-args
              (error "Error: ~a option requires a file path." arg))
@@ -328,8 +386,7 @@
                (push arg prompt-arg-l))
            (setf prompt-arg-l (nconc (nreverse prompt-arg-l) rem-args))
            (setf rem-args nil)))))
-    (values expl-tag (nreverse ctx-files) (nreverse prompt-arg-l))))
-
+    (values expl-tag (nreverse ctx-files) (nreverse prompt-arg-l) help-req-p)))
 
 (defun initial-prompt (prompt-comps ctx-content tag-from-cli)
   "Assembles the final initial prompt string for Gemini and determines the conversation tag.
@@ -379,12 +436,10 @@
 
     (values final-prompt deriv-tag)))
 
-
 (defun start-chat (init-prompt tag &key (model "gemini-2.5-pro"))
   "Initiates the Gemini conversation with the assembled initial prompt and tag."
   (format t "Conversation tag is: [~a]~%" tag)
   (gem-conv init-prompt :model model :tag tag))
-
 
 (defun top ()
   "Main entry point for the gemini-chat application.
@@ -392,8 +447,12 @@
   (let* ((all-args sb-ext:*posix-argv*)
          (cmd-args (rest all-args)))
 
-    (multiple-value-bind (expl-tag ctx-files prompt-comps)
+    (multiple-value-bind (expl-tag ctx-files prompt-comps help-req-p)
         (cli-args cmd-args)
+
+      (when help-req-p
+        (print-help)
+        (uiop:quit 0)) ; Exit after printing help
 
       (let* ((actual-tag (or expl-tag *d-tag*))
              (ctx-content (proc-ctx-files ctx-files)))
