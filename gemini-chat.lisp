@@ -158,24 +158,16 @@
           (format t "~&Usage: :save <filename>. No filename provided.~%")
           (xlgt :answer-log "~&Usage: :save <filename>. No filename provided.~%")))))
 
-(defun proc-usr-prompt-file (raw-prompt)
-  "Processes a raw user prompt, checking for leading '/' for file paths.
-   If a file path is found and readable, reads content and prompts for more instructions.
-   Returns the final prompt string to send to Gemini, or (values NIL :file-error) on failure."
-  (if (and (> (length raw-prompt) 0) (char= (char raw-prompt 0) #\/))
-      (let* ((fpath (subseq raw-prompt 1))
-             (fcontent (read-file fpath)))
-        (if fcontent
-            (progn
-              (xlgt "~&File '~a' loaded. Enter an additional prompt for Gemini (optional):~%" fpath)
-              (let ((add-prompt (read-line)))
-                (format nil "File content from ~a:~%```~a```~%~%My prompt: ~a"
-                        fpath fcontent add-prompt)))
-            (progn
-              (format t "~&Error: Could not read file '~a'. Please try again.~%" fpath)
-              (flush-all-log-streams)
-              (values nil :file-error)))) ; Signal an error to the caller
-      raw-prompt)) ; Not a file, return as is
+(defun proc-usr-prompt-file (fpath)
+  "Reads content from a specified file path.
+   Returns the file content string, or (values NIL :file-error) on failure."
+  (let ((fcontent (read-file fpath)))
+    (if fcontent
+        fcontent
+        (progn
+          (format t "~&Error: Could not read file '~a'. Please try again.~%" fpath)
+          (flush-all-log-streams)
+          (values nil :file-error)))))
 
 (defun gem-interact (u-prompt conv-hist model)
   "Sends a user prompt to Gemini, gets a response, and updates history.
@@ -231,18 +223,14 @@
 
 (defun read-usr-cmd (raw-in)
   "Parses raw user input and determines the command type and associated data.
-   Returns (values command-keyword data) or (values :error nil) if a file read fails."
+   Returns (values command-keyword data)."
   (cond
     ((string-equal raw-in "quit")
      (values :quit nil))
     ((str-starts-with-p raw-in ":save ")
      (values :save raw-in))
     (t
-     (multiple-value-bind (proc-prompt err-type)
-         (proc-usr-prompt-file raw-in)
-       (if err-type
-           (values :error nil)
-           (values :prompt proc-prompt))))))
+     (values :prompt raw-in)))) ; Now returns direct prompt or file path to be processed by initial-prompt
 
 (defun proc-send-prompt (proc-prompt conv-hist model)
   "Processes a valid user prompt (which may include file content) and interacts with Gemini.
@@ -269,11 +257,11 @@
            (continue)) ; Continue to next loop iteration
           (:prompt
            (multiple-value-bind (new-total-hist success)
-               (proc-send-prompt cmd-data conv-hist model)
+               (proc-send-prompt cmd-data conv-hist model) ; cmd-data is already the prompt string
              (if success
                  (setf conv-hist new-total-hist)
                  (return conv-hist)))) ; Return history on error
-          (:error
+          (:error ; This case should not be reached with the new proc-usr-prompt-file
            (format t "~&Skipping turn due to input error.~%")
            (continue)))))))
 
@@ -306,179 +294,128 @@
 
 ;; --- New functions for refactored top ---
 
-(defun print-help ()
+(defun print-help (parser)
   "Prints the command-line help message and example usage."
-  (format t "~&gemini-chat version ~a~%~%" (get-version)) ; Added version to help
-  (format t "Usage: ./gemini-chat [options] [tag] [initial_prompt | /path/to/file.txt]~%~%")
-  (format t "Options:~%")
-  (format t "  -h, --help            Show this help message and exit.~%")
-  (format t "  -c, --context <file>  Specify a file to be included as initial context.~%~%")
-  (format t "Interactive Commands (during chat loop):~%")
-  (format t "  :save <filename>      Start or change saving model responses to the specified file.~%")
-  (format t "  quit                  End the conversation.~%~%")
-  (format t "Initial Prompt Options:~%")
-  (format t "  If no initial prompt or file is given, the program will prompt you interactively.~%")
-  (format t "  If the first argument is a path starting with '/', the file content will be loaded as the initial input.~%")
-  (format t "  Otherwise, all subsequent arguments are treated as the initial prompt text.~%~%")
-
-  (format t "---~%~%")
-  (format t "## Example Flow:~%~%")
-  (format t "To use the `gemini-chat` program with an input file, a context file, a defined output file, and chat input that references the input file, you'd use a command like this:~%~%")
+  (format t "~&gemini-chat version ~a~%~%" (get-version))
+  (cl-argparse:print-help parser *standard-output*) ; Use cl-argparse's help
+  (format t "~%---~%~%")
+  (format t "## Examples:~%~%")
   (format t "```bash~%")
-  (format t "./gemini-chat -c your_context_file.txt :save my_output.txt /path/to/your_input_file.txt \"Please summarize the content of the attached file and then answer my questions.\"~%")
+  (format t "# Basic chat with an explicit tag and initial prompt~%")
+  (format t "./gemini-chat -t my-session \"Summarize the last quarter's sales report.~%~%")
+  (format t "~%# Include a context file and save output to a log~%")
+  (format t "./gemini-chat -c docs/project_info.txt -s session_log.txt \"Explain the new architecture design.\"~%")
+  (format t "~%# Use a local file as primary input and ask a follow-up question~%")
+  (format t "./gemini-chat -f data/report.csv -t csv-analysis \"What are the key trends in this data?\"~%")
+  (format t "~%# Interactive session (no initial prompt)~%")
+  (format t "./gemini-chat -t interactive-session~%")
   (format t "```~%~%")
-  (format t "Let's break down the components of that command:~%~%")
-  (format t "* **`./gemini-chat`**: This is how you'd typically execute the compiled program.~%")
-  (format t "* **`-c your_context_file.txt`** (or `--context your_context_file.txt`):~%")
-  (format t "    * `:-c` or `--context` is the option to specify a **context file**.~%")
-  (format t "    * `your_context_file.txt` is the path to the file whose content you want to provide as additional context to the Gemini model before it processes your main prompt. This is useful for providing background information, specific guidelines, or data that isn't directly part of your immediate query but should influence the model's response.~%")
-  (format t "* **`:save my_output.txt`**:~%")
-  (format t "    * `::save` is a special command *within* `gemini-chat` that tells it to direct the model's responses to a file.~%")
-  (format t "    * `my_output.txt` is the name of the file where the conversation's output will be saved. The program will open this file and append Gemini's responses to it.~%")
-  (format t "* **`/path/to/your_input_file.txt`**:~%")
-  (format t "    * When the first non-option argument on the command line starts with a `/` (indicating a file path), `gemini-chat` will read this file's content. This becomes the primary 'input file' for the current turn.~%")
-  (format t "    * The `gemini-chat` program will then prompt you for an **additional prompt** that will accompany the file content.~%")
-  (format t "* **`\"Please summarize the content of the attached file and then answer my questions.\"`**:~%")
-  (format t "    * This is the **chat input** you'd type after `gemini-chat` prompts you, following the reading of `/path/to/your_input_file.txt`.~%")
-  (format t "    * This is where you provide instructions or questions *related to the content of the input file*.~%~%")
-  (format t "---~%~%")
-  (format t "### Example Flow:~%~%")
-  (format t "1.  You run the command:~%    ```bash~%")
-  (format t "    ./gemini-chat -c my_project_docs.txt :save session_log.txt /home/bill/data/quarterly_report.csv~%")
-  (format t "    ```~%")
-  (format t "2.  `gemini-chat` processes `my_project_docs.txt` as context.~%")
-  (format t "3.  It sets up `session_log.txt` to save the output.~%")
-  (format t "4.  It reads `/home/bill/data/quarterly_report.csv`.~%")
-  (format t "5.  You then see a prompt like:~%    ```~%")
-  (format t "    File '/home/bill/data/quarterly_report.csv' loaded. Enter an additional prompt for Gemini (optional):~%")
-  (format t "    ```~%")
-  (format t "6.  You would type:~%    ```~%")
-  (format t "    Based on the report, what were the key revenue drivers and what challenges are highlighted?~%")
-  (format t "    ```~%")
-  (format t "7.  `gemini-chat` combines the context from `my_project_docs.txt`, the content of `quarterly_report.csv`, and your \"key revenue drivers\" prompt, sends it to Gemini, and logs the response to `session_log.txt` (and displays it to you).~%")
   (format t "---~%~%")
   (format t "Report any issues or suggestions!")
   (finish-output))
 
-(defun cli-args (args)
-  "Processes command-line arguments.
-   Returns (values explicit-tag context-files prompt-arg-list help-requested-p).
-   'explicit-tag' is the tag provided directly on the command line (e.g., 'my-chat-tag').
-   'context-files' is a list of file paths specified with -c or --context.
-   'prompt-arg-list' is a list of strings forming the raw initial prompt,
-   which might include a file path as its first element if provided directly.
-   'help-requested-p' is T if -h or --help was found."
-  (let ((expl-tag nil)
-        (ctx-files nil)
-        (prompt-arg-l nil)
-        (help-req-p nil)
-        (rem-args args))
-    (loop while rem-args do
-      (let ((arg (pop rem-args)))
-        (cond
-          ((or (string= arg "-h") (string= arg "--help"))
-           (setf help-req-p t)
-           (setf rem-args nil)) ; Stop processing if help is requested
-          ((or (string= arg "-c") (string= arg "--context"))
-           (unless rem-args
-             (error "Error: ~a option requires a file path." arg))
-           (push (pop rem-args) ctx-files))
-          (t
-           (if (and (not expl-tag)
-                    (not (uiop:file-exists-p arg))
-                    (not (str-starts-with-p arg "/")))
-               (setf expl-tag arg)
-               (push arg prompt-arg-l))
-           (setf prompt-arg-l (nconc (nreverse prompt-arg-l) rem-args))
-           (setf rem-args nil)))))
-    (values expl-tag (nreverse ctx-files) (nreverse prompt-arg-l) help-req-p)))
 
-(defun initial-prompt (prompt-comps ctx-content tag-from-cli)
-  "Assembles the final initial prompt string for Gemini and determines the conversation tag.
-   'prompt-comps' are raw parts from CLI.
-   'ctx-content' is the combined text from context files.
-   'tag-from-cli' is the tag explicitly provided via CLI, or *d-tag*.
+(defun initial-prompt (parsed-args ctx-content)
+  "Assembles the final initial prompt string for Gemini based on parsed arguments and context.
    Returns (values final-prompt-string new-tag) or (values nil nil) on error."
-  (let ((final-prompt nil)
-        (deriv-tag tag-from-cli))
+  (let* ((input-file-path (getf parsed-args :input-file))
+         (initial-prompt-text (getf parsed-args :args)) ; Non-option args
+         (final-prompt nil)
+         (file-content nil)
+         (prompt-from-cli (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" initial-prompt-text))))
+
+    (when input-file-path
+      (multiple-value-setq (file-content)
+        (proc-usr-prompt-file input-file-path))
+      (unless file-content
+        (return-from initial-prompt (values nil nil)))) ; Error reading file
 
     (cond
-      ;; Case 1: No command-line prompt components, prompt the user interactively
-      ((null prompt-comps)
-       (format t "~&Please enter your initial question or file path (e.g., /path/to/my/file.txt):~%")
-       (let* ((usr-in (read-line)))
-         (multiple-value-bind (proc-in err-type)
-             (proc-usr-prompt-file usr-in)
-           (if err-type
-               (return-from initial-prompt (values nil nil))
-               (progn
-                 (when (and (string-equal deriv-tag *d-tag*)
-                            (char= (char usr-in 0) #\/))
-                   (let ((pname (parse-namestring (subseq usr-in 1))))
-                     (when (pathname-name pname)
-                       (setf deriv-tag (pathname-name pname)))))
-                 (setf final-prompt (format nil "~a~%~a" proc-in (or ctx-content ""))))))))
+      ;; Case 1: No initial prompt via CLI (neither -f nor non-option args), prompt interactively
+      ((and (null input-file-path) (string= prompt-from-cli ""))
+       (format t "~&Please enter your initial question (or type 'quit' to end):~%")
+       (let ((usr-in (read-line)))
+         (when (string-equal usr-in "quit")
+           (return-from initial-prompt (values nil nil)))
+         (setf final-prompt (format nil "~a~%~a" (or ctx-content "") usr-in))))
 
-      ;; Case 2: First component is an existing file path (from CLI)
-      ((uiop:file-exists-p (first prompt-comps))
-       (let* ((fpath (first prompt-comps))
-              (fcontent (read-file fpath)))
-         (if fcontent
-             (progn
-               (when (string-equal deriv-tag *d-tag*)
-                   (setf deriv-tag (pathname-name (parse-namestring fpath))))
-               (let ((usr-inst (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" (rest prompt-comps)))))
-                 (setf final-prompt
-                       (format nil "~a~%File content from ~a:~%```~a```~%~%My instructions: ~a"
-                               (or ctx-content "") fpath fcontent usr-inst))))
-             (progn
-               (format t "~&Error: Could not read file '~a'. Proceeding with prompt only.~%" fpath)
-               (setf final-prompt (string-trim '(#\Space #\Newline #\Tab) (format nil "~a~%~{~a ~}" (or ctx-content "") (rest prompt-comps))))))))
+      ;; Case 2: Input file provided, combine its content with the prompt
+      (input-file-path
+       (setf final-prompt
+             (format nil "~a~%File content from ~a:~%```~a```~%~%My prompt: ~a"
+                     (or ctx-content "") input-file-path file-content prompt-from-cli)))
 
-      ;; Case 3: All components are direct prompt text (from CLI)
+      ;; Case 3: Only direct prompt text provided
       (t
-       (setf final-prompt (string-trim '(#\Space #\Newline #\Tab) (format nil "~a~%~{~a ~}" (or ctx-content "") prompt-comps)))))
+       (setf final-prompt (format nil "~a~%~a" (or ctx-content "") prompt-from-cli))))
 
-    (values final-prompt deriv-tag)))
+    ;; Tag is now explicit from parsed-args
+    (values final-prompt (getf parsed-args :tag *d-tag*))))
 
-(defun start-chat (init-prompt tag &key (model "gemini-2.5-pro"))
-  "Initiates the Gemini conversation with the assembled initial prompt and tag."
-  (format t "Conversation tag is: [~a]~%" tag)
-  (gem-conv init-prompt :model model :tag tag))
+
+(defun parse-command-line (args)
+  "Parses the command-line arguments using cl-argparse."
+  (cl-argparse:parse-args args
+    (cl-argparse:parser (:usage (format nil "~a [options] [initial_prompt_text...]" (get-version)))
+      (cl-argparse:flag ("-h" "--help")
+        :help "Show help message and exit."
+        :action :help)
+      (cl-argparse:flag ("-c" "--context")
+        :arg-name "FILE"
+        :help "Path to a context file. Can be specified multiple times."
+        :collect t)
+      (cl-argparse:flag ("-s" "--save")
+        :arg-name "FILE"
+        :help "File to save Gemini's responses to.")
+      (cl-argparse:flag ("-t" "--tag")
+        :arg-name "TAG"
+        :help "A unique tag for the conversation logs (default: chat).")
+      (cl-argparse:flag ("-f" "--input-file")
+        :arg-name "FILE"
+        :help "Path to a primary input file whose content will be sent to Gemini with your prompt.")
+      (cl-argparse:positional "args"
+        :help "The initial prompt text to send to Gemini. If -f is used, this is additional instruction."
+        :collect t))))
 
 (defun run-chat (&rest raw-args)
-  "Main entry point for the gemini-chat application when invoked with arguments.
-   Handles command-line argument parsing, initial prompt assembly, and starting the chat session.
-   This function can be called directly from a SLIME session with:
-   - a single list of arguments: (gemini-chat:run-chat '(\"-c\" \"my_context.txt\" \":save\" \"output.txt\" \"/path/to/my_input.txt\"))
-   - multiple arguments: (gemini-chat:run-chat \"-c\" \"my_context.txt\" \":save\" \"output.txt\" \"/path/to/my_input.txt\")"
-  (let* ((ver (get-version)) ; Get version at startup
+  "Main entry point for the gemini-chat application.
+   Handles argument parsing, initial prompt assembly, and starting the chat session."
+  (let* ((ver (get-version))
          (cmd-args
-           ;; If run-chat was called with a single list as its argument (common from (rest sb-ext:*posix-argv*)),
-           ;; unwrap it. Otherwise, use raw-args as is.
            (if (and (consp raw-args) (listp (car raw-args)))
                (car raw-args)
                raw-args)))
 
-    (format t "~&gemini-chat version ~a~%" ver) ; Print version to console on normal startup
+    (format t "~&gemini-chat version ~a~%" ver)
 
-    (multiple-value-bind (expl-tag ctx-files prompt-comps help-req-p)
-        (cli-args cmd-args)
+    (handler-case
+        (let* ((parsed-args (parse-command-line cmd-args))
+               (context-files (getf parsed-args :context))
+               (save-file (getf parsed-args :save))
+               (actual-tag (getf parsed-args :tag *d-tag*))
+               (ctx-content (proc-ctx-files context-files)))
 
-      (when help-req-p
-        (print-help)
+          ;; Handle initial save command if -s was provided
+          (when save-file
+            (save-cmd (format nil ":save ~a" save-file) actual-tag))
+
+          (multiple-value-bind (f-prompt d-tag)
+              (initial-prompt parsed-args ctx-content)
+            (unless f-prompt
+              (format t "~&Initial prompt generation failed or user quit. Exiting.~%")
+              (return-from run-chat nil))
+
+            (start-chat f-prompt (or d-tag actual-tag)))) ; Use d-tag if initial-prompt derived one, else actual-tag
+      (cl-argparse:help-requested (c)
+        (print-help (cl-argparse:parser c))
         (uiop:quit 0))
-
-      (let* ((actual-tag (or expl-tag *d-tag*))
-             (ctx-content (proc-ctx-files ctx-files)))
-
-        (multiple-value-bind (f-prompt d-tag)
-            (initial-prompt prompt-comps ctx-content actual-tag)
-          (unless f-prompt
-            (format t "~&Initial prompt generation failed. Exiting.~%")
-            (return-from run-chat nil))
-
-          (start-chat f-prompt (or d-tag actual-tag)))))))
+      (cl-argparse:argparse-error (c)
+        (format t "~&Error parsing arguments: ~a~%" (cl-argparse:format-error c))
+        (print-help (cl-argparse:parser c))
+        (uiop:quit 1))
+      (error (c)
+        (format t "~&An unexpected error occurred: ~a~%" c)
+        (uiop:quit 1)))))
 
 (defun top ()
   "Toplevel function for the compiled gemini-chat executable.
@@ -487,9 +424,9 @@
 
 (defun save-core ()
   "Saves the current Lisp image as an executable."
-  (format t "Building gemini-chat version ~a~%" (get-version)) ; Updated to use get-version
+  (format t "Building gemini-chat version ~a~%" (get-version))
   (sb-ext:save-lisp-and-die "gemini-chat"
                             :toplevel #'top
                             :save-runtime-options t
-                            ; :compression 22
+                            :compression 22
                             :executable t))
