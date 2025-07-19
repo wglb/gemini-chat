@@ -1,6 +1,24 @@
 ---
 ## CHANGELOG.md
 
+---
+## CHANGELOG.md
+
+### Version 1.3.1 - 2025-07-19
+
+This release introduces significant enhancements for managing conversation context and controlling output logging.
+
+#### New Features
+
+* **Context File Inclusion**: You can now include the content of one or more files as initial context for Gemini. Use the command-line options `-c <filepath>` or `--context <filepath>`. This is ideal for providing code, documentation, or other background information at the start of a conversation.
+* **Runtime Answer Logging**: A new interactive command, `:save <filename>`, lets you record Gemini's responses (and any API errors related to generating text) to a specified file during a conversation. This file will contain only the model's output, offering a clean log of the answers provided. Typing `:save` again will switch the logging to a new file or close the current one.
+
+#### Bug Fixes
+
+* **Corrected Command-Line Argument Access**: Fixed an issue where `sb-ext:*posix-argv*` was incorrectly invoked as a function. It is now correctly accessed as a special variable, ensuring that command-line arguments are parsed as intended. This resolves a potential runtime error when the executable starts up.
+
+---
+
 Version 1.2.3 - 2025-07-18
 This patch release corrects a subtle but important error in how command-line arguments were processed, ensuring proper handling of command-line arguments.
 
