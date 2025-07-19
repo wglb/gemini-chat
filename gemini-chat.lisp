@@ -179,7 +179,9 @@
 (defun handle-gemini-interaction (user-prompt conversation-history model)
   "Handles sending a user prompt to Gemini, getting a response, and updating history.
    Returns (values new-conversation-history success-p).
-   The 'tag' parameter was removed as it's not used within this function."
+   The 'tag' parameter has been definitively removed from its signature as it's not needed
+   for the core API interaction or history management within this function.
+   Logging functions (xlg, xlgt) implicitly use the global log streams set up by gemini-conversation."
   (xlg :thinking-log "~&User: ~a" user-prompt)
   (xlgt :answer-log "User: ~a" user-prompt)
 
@@ -192,12 +194,70 @@
 
     (handle-gemini-turn-response model-response-text parsed-json new-user-turn new-model-turn updated-history :turn-type "follow-up turn")))
 
-(defun process-and-send-prompt (processed-prompt conversation-history model tag)
+(defun process-and-send-prompt (processed-prompt conversation-history model)
   "Processes a valid user prompt (which may include file content) and interacts with Gemini.
    Returns (values new-history success-p).
-   Note: The 'tag' is passed here because 'handle-save-command' (which also uses 'tag') is a sibling handler in the main loop.
-   'handle-gemini-interaction' itself no longer needs 'tag'."
+   The 'tag' parameter has been removed from this function's signature as it is not used
+   internally nor passed to `handle-gemini-interaction`.
+   The `tag` is handled at the `gemini-chat-loop` and `gemini-conversation` levels for
+   managing log file names and the runtime output stream."
   (handle-gemini-interaction processed-prompt conversation-history model))
+
+(defun gemini-conversation (initial-prompt &key (model "gemini-2.5-pro") (tag *default-conversation-tag*))
+  "Starts and manages a multi-turn conversation with the Gemini API.
+   Takes an initial prompt, then allows for follow-up questions.
+   Returns the complete conversation history."
+  (with-open-log-files ((:answer-log (format nil "~a-the-answer.log" tag) :ymd)
+                        (:thinking-log (format nil "~a-thinking.log" tag) :ymd))
+    (let* ((ver (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
+           (vermsg (format nil "begin, gemini-chat version ~a----------------------------------------" ver)))
+      (xlg :answer-log vermsg)
+      (xlg :thinking-log vermsg))
+
+    (let ((conversation-history nil))
+
+      ;; First turn (initial prompt) - Corrected call: removed 'tag' as argument
+      (multiple-value-bind (new-history success)
+          (handle-gemini-interaction initial-prompt conversation-history model)
+        (if success
+            (setf conversation-history new-history)
+            (return-from gemini-conversation nil)))
+
+      ;; If the initial turn was successful, proceed to the interactive loop
+      (when conversation-history
+        ;; gemini-chat-loop still needs 'tag' to pass to handle-save-command
+        (setf conversation-history (gemini-chat-loop conversation-history model tag)))
+      conversation-history)))
+
+;; The definition of gemini-chat-loop also needs to reflect the change
+;; in the arguments it passes to process-and-send-prompt
+(defun gemini-chat-loop (conversation-history model tag)
+  "Manages the interactive follow-up turns of a Gemini conversation.
+   Takes the current conversation history, model, and tag as input.
+   Returns the final conversation history."
+  (loop
+    (xlgt :answer-log "~&~%Enter your next prompt (or type 'quit' to end, ':save <filename>' to save output):")
+    (let ((raw-user-input (read-line)))
+
+      (multiple-value-bind (command-type command-data)
+          (read-user-command raw-user-input)
+        (ecase command-type
+          (:quit
+           (handle-quit-command)
+           (return conversation-history)) ; Exit loop and return history
+          (:save
+           (handle-save-command command-data tag) ; command-data is the full ":save <filename>" string
+           (continue)) ; Continue to next loop iteration
+          (:prompt
+           (multiple-value-bind (new-total-history success)
+               ;; Corrected call: removed 'tag' as argument to process-and-send-prompt
+               (process-and-send-prompt command-data conversation-history model)
+             (if success
+                 (setf conversation-history new-total-history)
+                 (return conversation-history)))) ; Return history on error
+          (:error
+           (format t "~&Skipping turn due to input error.~%")
+           (continue)))))))
 
 (defun handle-gemini-turn-response (model-response-text parsed-json user-turn model-turn conversation-history &key (turn-type "turn"))
   "Handles the processing of a Gemini API response for a single turn,
@@ -250,65 +310,6 @@
        (if error-type
            (values :error nil)
            (values :prompt processed-prompt))))))
-
-(defun process-and-send-prompt (processed-prompt conversation-history model tag)
-  "Processes a valid user prompt (which may include file content) and interacts with Gemini.
-   Returns (values new-history success-p)."
-  (handle-gemini-interaction processed-prompt conversation-history model tag))
-
-
-(defun gemini-chat-loop (conversation-history model tag)
-  "Manages the interactive follow-up turns of a Gemini conversation.
-   Takes the current conversation history, model, and tag as input.
-   Returns the final conversation history."
-  (loop
-    (xlgt :answer-log "~&~%Enter your next prompt (or type 'quit' to end, ':save <filename>' to save output):")
-    (let ((raw-user-input (read-line)))
-
-      (multiple-value-bind (command-type command-data)
-          (read-user-command raw-user-input)
-        (ecase command-type
-          (:quit
-           (handle-quit-command)
-           (return conversation-history)) ; Exit loop and return history
-          (:save
-           (handle-save-command command-data tag) ; command-data is the full ":save <filename>" string
-           (continue)) ; Continue to next loop iteration
-          (:prompt
-           (multiple-value-bind (new-total-history success)
-               (process-and-send-prompt command-data conversation-history model tag) ; command-data is the processed prompt string
-             (if success
-                 (setf conversation-history new-total-history)
-                 (return conversation-history)))) ; Return history on error
-          (:error
-           (format t "~&Skipping turn due to input error.~%")
-           (continue))))))) ; Continue to next loop iteration after an input error
-
-
-(defun gemini-conversation (initial-prompt &key (model "gemini-2.5-pro") (tag *default-conversation-tag*))
-  "Starts and manages a multi-turn conversation with the Gemini API.
-   Takes an initial prompt, then allows for follow-up questions.
-   Returns the complete conversation history."
-  (with-open-log-files ((:answer-log (format nil "~a-the-answer.log" tag) :ymd)
-                        (:thinking-log (format nil "~a-thinking.log" tag) :ymd))
-    (let* ((ver (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
-           (vermsg (format nil "begin, gemini-chat version ~a----------------------------------------" ver)))
-      (xlg :answer-log vermsg)
-      (xlg :thinking-log vermsg))
-
-    (let ((conversation-history nil))
-
-      ;; First turn (initial prompt)
-      (multiple-value-bind (new-history success)
-          (handle-gemini-interaction initial-prompt conversation-history model tag)
-        (if success
-            (setf conversation-history new-history)
-            (return-from gemini-conversation nil)))
-
-      ;; If the initial turn was successful, proceed to the interactive loop
-      (when conversation-history
-        (setf conversation-history (gemini-chat-loop conversation-history model tag)))
-      conversation-history)))
 
 ;; Updated gemini-top function for robust command-line parsing and log tag derivation
 (defun gemini-top ()
@@ -413,5 +414,5 @@
   (sb-ext:save-lisp-and-die "gemini-chat"
                             :toplevel #'gemini-top
                             :save-runtime-options t
-                            :compression 22
+                            ;; :compression 22
                             :executable t))

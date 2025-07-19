@@ -1,8 +1,0 @@
-When producing emacs org files, wrap lines at 100 columns. For action items, put [/] in the parent end of line, and - [ ] beginning of line for each item in the list.
-
-Remember my preferred style of lisp project file formats, with the project.asd, project-pkg.asd and project.lisp structure.
-
-My work is almost done with entirely Emacs. Use this information only when we are discussing programming for topics whose alternatives might be VSCODE.
-
-All analogies are false.
-

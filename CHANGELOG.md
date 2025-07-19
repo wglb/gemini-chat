@@ -4,6 +4,24 @@
 ---
 ## CHANGELOG.md
 
+Here's the changelog.me entry for version 1.3.2, Bill, detailing the recent structural improvements and bug fixes:
+
+## Version 1.3.2 - 2025-07-19
+
+### Refactoring & Modularity
+- The `gemini-chat-loop` function has been significantly refactored for improved modularity and clarity.
+    - Introduced `read-user-command` to centralize the parsing of user input (e.g., 'quit', ':save', or prompt).
+    - Added `handle-quit-command` to encapsulate shutdown procedures.
+    - Created `process-and-send-prompt` to streamline the logic for processing user prompts (including file content) and interacting with the Gemini API for a single turn.
+    - The main `gemini-chat-loop` now acts primarily as a dispatcher, calling appropriate helper functions based on user input.
+
+### Bug Fixes
+- Resolved an issue where the `tag` variable was being incorrectly passed to `handle-gemini-interaction`, leading to argument count mismatches and unused variable warnings.
+    - `handle-gemini-interaction` no longer accepts `tag` as a parameter, as it was not utilized internally.
+    - Updated all call sites for `handle-gemini-interaction` (in `gemini-conversation` and `process-and-send-prompt`) to correctly pass only the required three arguments.
+    - Eliminated an unused `tag` parameter from `process-and-send-prompt`'s definition.
+
+
 ### Version 1.3.1 - 2025-07-19
 
 This release introduces significant enhancements for managing conversation context and controlling output logging.
