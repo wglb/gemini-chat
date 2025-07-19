@@ -12,6 +12,10 @@
 (defparameter *run-out-s* nil
   "Stream for saving conversation answers during a conversation.")
 
+;; Function to retrieve the current version
+(defun get-version ()
+  (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
+
 (defun get-key ()
   "Retrieves the Gemini API key from the GEMINI_API_KEY environment variable.
    Signals an error if the environment variable is not set.
@@ -280,7 +284,7 @@
    Returns the complete conversation history."
   (with-open-log-files ((:answer-log (format nil "~a-the-answer.log" tag) :ymd)
                         (:thinking-log (format nil "~a-thinking.log" tag) :ymd))
-    (let* ((ver (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
+    (let* ((ver (get-version))
            (vermsg (format nil "begin, gemini-chat version ~a----------------------------------------" ver)))
       (xlg :answer-log vermsg)
       (xlg :thinking-log vermsg))
@@ -304,7 +308,8 @@
 
 (defun print-help ()
   "Prints the command-line help message and example usage."
-  (format t "~&Usage: ./gemini-chat [options] [tag] [initial_prompt | /path/to/file.txt]~%~%")
+  (format t "~&gemini-chat version ~a~%~%" (get-version)) ; Added version to help
+  (format t "Usage: ./gemini-chat [options] [tag] [initial_prompt | /path/to/file.txt]~%~%")
   (format t "Options:~%")
   (format t "  -h, --help            Show this help message and exit.~%")
   (format t "  -c, --context <file>  Specify a file to be included as initial context.~%~%")
@@ -447,12 +452,15 @@
    This function can be called directly from a SLIME session with:
    - a single list of arguments: (gemini-chat:run-chat '(\"-c\" \"my_context.txt\" \":save\" \"output.txt\" \"/path/to/my_input.txt\"))
    - multiple arguments: (gemini-chat:run-chat \"-c\" \"my_context.txt\" \":save\" \"output.txt\" \"/path/to/my_input.txt\")"
-  (let ((cmd-args
-          ;; If run-chat was called with a single list as its argument (common from (rest sb-ext:*posix-argv*)),
-          ;; unwrap it. Otherwise, use raw-args as is.
-          (if (and (consp raw-args) (listp (car raw-args)))
-              (car raw-args)
-              raw-args)))
+  (let* ((ver (get-version)) ; Get version at startup
+         (cmd-args
+           ;; If run-chat was called with a single list as its argument (common from (rest sb-ext:*posix-argv*)),
+           ;; unwrap it. Otherwise, use raw-args as is.
+           (if (and (consp raw-args) (listp (car raw-args)))
+               (car raw-args)
+               raw-args)))
+
+    (format t "~&gemini-chat version ~a~%" ver) ; Print version to console on normal startup
 
     (multiple-value-bind (expl-tag ctx-files prompt-comps help-req-p)
         (cli-args cmd-args)
@@ -479,9 +487,9 @@
 
 (defun save-core ()
   "Saves the current Lisp image as an executable."
-  (format t "Building gemini-chat version ~a~%" (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
+  (format t "Building gemini-chat version ~a~%" (get-version)) ; Updated to use get-version
   (sb-ext:save-lisp-and-die "gemini-chat"
                             :toplevel #'top
                             :save-runtime-options t
-                            :compression 22
+                            ; :compression 22
                             :executable t))

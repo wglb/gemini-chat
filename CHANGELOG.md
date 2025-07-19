@@ -1,6 +1,13 @@
 ---
 ## CHANGELOG.md
 ---
+## Version 1.3.7 - 2025-07-19
+
+### Changed
+* **Version Display**: The application's version number is now prominently displayed in several places for easier tracking:
+    * It's included in the **help output** (`-h` or `--help`).
+    * It prints to the **console during normal startup**.
+    * It's part of the **"begin-----" line** in your log files, including `the-answer.log` and `thinking.log`.
 
 ## Version 1.3.6 - 2025-07-19
 
