@@ -15,7 +15,7 @@
 (defun get-gemini-api-key ()
   "Retrieves the Gemini API key from the GEMINI_API_KEY environment variable.
    Signals an error if the environment variable is not set.
-   It first tries GEMINI_API_KEY, then falls back to _GEMINI_API_KEY_."
+   It first tries GEMINI_API-KEY, then falls back to _GEMINI_API_KEY_."
   (let ((key (or (getenv "GEMINI_API_KEY")
                  (getenv "_GEMINI_API_KEY_"))))
     (unless key
@@ -50,13 +50,8 @@
   (let* ((api-key (get-gemini-api-key))
          (api-url (format nil "https://generativelanguage.googleapis.com/v1beta/models/~a:generateContent?key=~a"
                           model api-key))
-         ;; The top-level payload needs to be a JSON object with a "contents" key.
-         ;; We must explicitly construct this using jsown:new-js to guarantee :OBJ format
-         ;; and string keys for correct casing.
          (json-payload-lisp-object (jsown:new-js ("contents" messages)))
-
          (json-payload-string (jsown:to-json json-payload-lisp-object))
-
          (headers '(("Content-Type" . "application/json"))))
     (xlg :thinking-log "~&Making API request to: ~a" api-url)
     (xlg :thinking-log "JSON string being sent: ~a" json-payload-string)
@@ -89,13 +84,11 @@
   "Extracts the generated text from the parsed Gemini API JSON response using jsown accessors.
    Returns the text string or NIL if not found.
    JSOWN represents JSON objects as (:OBJ key1 val1 key2 val2 ...)."
-  ;; Add a check for an 'error' key at the top level
   (cond (parsed-json
          (if (jsown:keyp parsed-json "error")
              (progn
                (xlg :thinking-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
                (xlgt :answer-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
-               ;; Error message will be handled by handle-gemini-turn-response if it goes to answer log
                nil)
              (let* ((candidates (jsown:val parsed-json "candidates"))
                     (first-candidate (car candidates)))
@@ -106,7 +99,6 @@
                    (when first-part
                      (jsown:val first-part "text")))))))
         (t (xlgt :answer-log "No parsed json available: ~a" parsed-json)
-           ;; Error message will be handled by handle-gemini-turn-response if it goes to answer log
            "No parsed json available. Why?")))
 
 (defun read-file-content (filepath)
@@ -137,119 +129,75 @@
       (format all-content "--- End Context Files --~%~%")
       (get-output-stream-string all-content))))
 
-(defun gemini-chat-loop (conversation-history model tag)
-  "Manages the interactive follow-up turns of a Gemini conversation.
-   Takes the current conversation history, model, and tag as input.
-   Returns the final conversation history."
-  (loop
-    (xlgt :answer-log "~&~%Enter your next prompt (or type 'quit' to end, ':save <filename>' to save output):")
-    (let* ((next-prompt (read-line))
-           (first-char (and (> (length next-prompt) 0) (char next-prompt 0))))
+(defun string-starts-with-p (string prefix)
+  "Checks if STRING starts with PREFIX."
+  (and (>= (length string) (length prefix))
+       (string= string prefix :end1 (length prefix))))
 
-      (cond
-        ((string-equal next-prompt "quit")
-         (format t "~&~%Ending conversation.~%")
-         (xlgt :answer-log "~&~%Ending conversation, dude.")
-         (when *runtime-output-stream*
-           (format *runtime-output-stream* "~&~%Ending conversation.~%")
-           (close *runtime-output-stream*)
-           (setf *runtime-output-stream* nil))
-         (flush-all-log-streams)
-         (return conversation-history))
+(defun handle-save-command (command-string tag)
+  "Handles the ':save <filename>' command. Opens a new runtime output stream
+   or closes the existing one."
+  (let* ((parts (split-sequence:split-sequence #\Space command-string :remove-empty-subseqs t))
+         (filepath (second parts)))
+    (if filepath
+        (handler-case
+            (progn
+              (when *runtime-output-stream* ; Close existing stream if any
+                (format t "~&Closing previous runtime output file.~%")
+                (close *runtime-output-stream*))
+              (setf *runtime-output-stream* (open filepath :direction :output :if-exists :supersede :if-does-not-exist :create))
+              (format t "~&Saving conversation answers to: ~a~%" filepath)
+              (xlgt :answer-log "~&Saving conversation answers to: ~a~%" filepath)
+              (format *runtime-output-stream* "~&--- Runtime Conversation Answers Log Started (~a) ---~%~%" tag))
+          (file-error (c)
+            (format t "~&Error opening file for saving: ~a~%" c)
+            (xlgt :answer-log "~&Error opening file for saving: ~a~%" c)
+            (setf *runtime-output-stream* nil)))
+        (progn
+          (format t "~&Usage: :save <filename>. No filename provided.~%")
+          (xlgt :answer-log "~&Usage: :save <filename>. No filename provided.~%")))))
 
-        ;; Handle :save command
-        ((and first-char (char= first-char #\:)
-              (string-starts-with-p next-prompt ":save "))
-         (let* ((parts (split-sequence:split-sequence #\Space next-prompt :remove-empty-subseqs t))
-                (filepath (second parts))) ; ":save" is first part, filename is second
-           (if filepath
-               (handler-case
-                   (progn
-                     (when *runtime-output-stream* ; Close existing stream if any
-                       (format t "~&Closing previous runtime output file.~%")
-                       (close *runtime-output-stream*))
-                     (setf *runtime-output-stream* (open filepath :direction :output :if-exists :supersede :if-does-not-exist :create))
-                     (format t "~&Saving conversation answers to: ~a~%" filepath)
-                     (xlgt :answer-log "~&Saving conversation answers to: ~a~%" filepath)
-                     (format *runtime-output-stream* "~&--- Runtime Conversation Answers Log Started (~a) ---~%~%" tag))
-                 (file-error (c)
-                   (format t "~&Error opening file for saving: ~a~%" c)
-                   (xlgt :answer-log "~&Error opening file for saving: ~a~%" c)
-                   (setf *runtime-output-stream* nil)))
-               (progn
-                 (format t "~&Usage: :save <filename>. No filename provided.~%")
-                 (xlgt :answer-log "~&Usage: :save <filename>. No filename provided.~%"))))
-         (continue)) ; Continue to next loop iteration after handling :save
+(defun process-user-prompt-and-file (raw-prompt)
+  "Processes a raw user prompt, checking for leading '/' for file paths.
+   If a file path is found and readable, reads content and prompts for more instructions.
+   Returns the final prompt string to send to Gemini, or (values NIL :file-error) on failure."
+  (if (and (> (length raw-prompt) 0) (char= (char raw-prompt 0) #\/))
+      (let* ((file-path (subseq raw-prompt 1))
+             (file-content (read-file-content file-path)))
+        (if file-content
+            (progn
+              (xlgt "~&File '~a' loaded. Enter an additional prompt for Gemini (optional):~%" file-path)
+              (let ((additional-prompt (read-line)))
+                (format nil "File content from ~a:~%```~a```~%~%My prompt: ~a"
+                        file-path file-content additional-prompt)))
+            (progn
+              (format t "~&Error: Could not read file '~a'. Please try again.~%" file-path)
+              (flush-all-log-streams)
+              (values nil :file-error)))) ; Signal an error to the caller
+      raw-prompt)) ; Not a file, return as is
 
-        (t
-         (let ((final-user-input next-prompt)) ; This will hold the text to send to Gemini
-           ;; Check for file input (starts with '/')
-           (if (and (> (length next-prompt) 0) (char= (char next-prompt 0) #\/))
-               (let* ((file-path (subseq next-prompt 1))
-                      (file-content (read-file-content file-path)))
-                 (if file-content
-                     (progn
-                       (xlgt "~&File '~a' loaded. Enter an additional prompt for Gemini (optional):~%" file-path)
-                       (let ((additional-prompt (read-line)))
-                         (setf final-user-input (format nil "File content from ~a:~%```~a```~%~%My prompt: ~a"
-                                                         file-path file-content additional-prompt))))
-                     (progn
-                       (format t "~&Error: Could not read file '~a'. Please try again.~%" file-path)
-                       (flush-all-log-streams)
-                       (continue)))) ; Skip to next loop iteration if file read failed
-             ;; Else (not a file input), final-user-input is already set to next-prompt
-             )
+(defun handle-gemini-interaction (user-prompt conversation-history model)
+  "Handles sending a user prompt to Gemini, getting a response, and updating history.
+   Returns (values new-conversation-history success-p).
+   The 'tag' parameter was removed as it's not used within this function."
+  (xlg :thinking-log "~&User: ~a" user-prompt)
+  (xlgt :answer-log "User: ~a" user-prompt)
 
-           (xlg :thinking-log "~&User: ~a" final-user-input)
-           (xlgt :answer-log "User: ~a" final-user-input)
+  (let* ((new-user-turn (create-message-turn "user" user-prompt))
+         (updated-history (append conversation-history (list new-user-turn)))
+         (response-stream (make-gemini-api-request updated-history :model model))
+         (parsed-json (parse-gemini-api-response response-stream))
+         (model-response-text (extract-gemini-text parsed-json))
+         (new-model-turn (create-message-turn "model" (or model-response-text "Error: No response"))))
 
-           (let* ((new-user-turn (create-message-turn "user" final-user-input))
-                  (updated-history (append conversation-history (list new-user-turn)))
-                  (response-stream (make-gemini-api-request updated-history :model model))
-                  (parsed-json (parse-gemini-api-response response-stream))
-                  (model-response-text (extract-gemini-text parsed-json))
-                  (new-model-turn (create-message-turn "model" (or model-response-text "Error: No response"))))
+    (handle-gemini-turn-response model-response-text parsed-json new-user-turn new-model-turn updated-history :turn-type "follow-up turn")))
 
-             (multiple-value-bind (new-total-history success)
-                 (handle-gemini-turn-response model-response-text parsed-json new-user-turn new-model-turn updated-history :turn-type "follow-up turn")
-               (if success
-                   (setf conversation-history new-total-history)
-                   (return conversation-history))))))))))
-
-(defun gemini-conversation (initial-prompt &key (model "gemini-2.5-pro") (tag *default-conversation-tag*))
-  "Starts and manages a multi-turn conversation with the Gemini API.
-   Takes an initial prompt, then allows for follow-up questions.
-   Returns the complete conversation history."
-  (with-open-log-files ((:answer-log (format nil "~a-the-answer.log" tag) :ymd)
-                        (:thinking-log (format nil "~a-thinking.log" tag) :ymd))
-    (let* ((ver (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
-           (vermsg (format nil "begin, gemini-chat version ~a----------------------------------------" ver)))
-      (xlg :answer-log vermsg)
-      (xlg :thinking-log vermsg)
-      )
-
-    (let ((conversation-history nil))
-
-      ;; First turn
-      (xlg :thinking-log "~&User: ~a" initial-prompt)
-      (xlgt :answer-log "User: ~a" initial-prompt)
-      (let* ((user-turn (create-message-turn "user" initial-prompt))
-             (response-stream (make-gemini-api-request (list user-turn) :model model))
-             (parsed-json (parse-gemini-api-response response-stream))
-             (model-response-text (extract-gemini-text parsed-json))
-             (model-turn (create-message-turn "model" (or model-response-text "Error: No response"))))
-
-        (multiple-value-bind (new-history success)
-            (handle-gemini-turn-response model-response-text parsed-json user-turn model-turn conversation-history :turn-type "initial turn")
-          (if success
-              (setf conversation-history new-history)
-              (return-from gemini-conversation nil))))
-
-      ;; If the initial turn was successful, proceed to the interactive loop
-      (when conversation-history
-        ;; Pass the tag to the chat loop so it can derive output file names
-        (setf conversation-history (gemini-chat-loop conversation-history model tag)))
-      conversation-history)))
+(defun process-and-send-prompt (processed-prompt conversation-history model tag)
+  "Processes a valid user prompt (which may include file content) and interacts with Gemini.
+   Returns (values new-history success-p).
+   Note: The 'tag' is passed here because 'handle-save-command' (which also uses 'tag') is a sibling handler in the main loop.
+   'handle-gemini-interaction' itself no longer needs 'tag'."
+  (handle-gemini-interaction processed-prompt conversation-history model))
 
 (defun handle-gemini-turn-response (model-response-text parsed-json user-turn model-turn conversation-history &key (turn-type "turn"))
   "Handles the processing of a Gemini API response for a single turn,
@@ -277,10 +225,90 @@
         (flush-all-log-streams)
         (values nil nil))))
 
-;; Utility to check if a string starts with a prefix
-(defun string-starts-with-p (string prefix)
-  (and (>= (length string) (length prefix))
-       (string= string prefix :end1 (length prefix))))
+;; New helper functions for gemini-chat-loop refactoring
+(defun handle-quit-command ()
+  "Performs cleanup when the 'quit' command is issued."
+  (format t "~&~%Ending conversation.~%")
+  (xlgt :answer-log "~&~%Ending conversation, dude.")
+  (when *runtime-output-stream*
+    (format *runtime-output-stream* "~&~%Ending conversation.~%")
+    (close *runtime-output-stream*)
+    (setf *runtime-output-stream* nil))
+  (flush-all-log-streams))
+
+(defun read-user-command (raw-input)
+  "Parses raw user input and determines the command type and associated data.
+   Returns (values command-keyword data) or (values :error nil) if a file read fails."
+  (cond
+    ((string-equal raw-input "quit")
+     (values :quit nil))
+    ((string-starts-with-p raw-input ":save ")
+     (values :save raw-input))
+    (t
+     (multiple-value-bind (processed-prompt error-type)
+         (process-user-prompt-and-file raw-input)
+       (if error-type
+           (values :error nil)
+           (values :prompt processed-prompt))))))
+
+(defun process-and-send-prompt (processed-prompt conversation-history model tag)
+  "Processes a valid user prompt (which may include file content) and interacts with Gemini.
+   Returns (values new-history success-p)."
+  (handle-gemini-interaction processed-prompt conversation-history model tag))
+
+
+(defun gemini-chat-loop (conversation-history model tag)
+  "Manages the interactive follow-up turns of a Gemini conversation.
+   Takes the current conversation history, model, and tag as input.
+   Returns the final conversation history."
+  (loop
+    (xlgt :answer-log "~&~%Enter your next prompt (or type 'quit' to end, ':save <filename>' to save output):")
+    (let ((raw-user-input (read-line)))
+
+      (multiple-value-bind (command-type command-data)
+          (read-user-command raw-user-input)
+        (ecase command-type
+          (:quit
+           (handle-quit-command)
+           (return conversation-history)) ; Exit loop and return history
+          (:save
+           (handle-save-command command-data tag) ; command-data is the full ":save <filename>" string
+           (continue)) ; Continue to next loop iteration
+          (:prompt
+           (multiple-value-bind (new-total-history success)
+               (process-and-send-prompt command-data conversation-history model tag) ; command-data is the processed prompt string
+             (if success
+                 (setf conversation-history new-total-history)
+                 (return conversation-history)))) ; Return history on error
+          (:error
+           (format t "~&Skipping turn due to input error.~%")
+           (continue))))))) ; Continue to next loop iteration after an input error
+
+
+(defun gemini-conversation (initial-prompt &key (model "gemini-2.5-pro") (tag *default-conversation-tag*))
+  "Starts and manages a multi-turn conversation with the Gemini API.
+   Takes an initial prompt, then allows for follow-up questions.
+   Returns the complete conversation history."
+  (with-open-log-files ((:answer-log (format nil "~a-the-answer.log" tag) :ymd)
+                        (:thinking-log (format nil "~a-thinking.log" tag) :ymd))
+    (let* ((ver (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
+           (vermsg (format nil "begin, gemini-chat version ~a----------------------------------------" ver)))
+      (xlg :answer-log vermsg)
+      (xlg :thinking-log vermsg))
+
+    (let ((conversation-history nil))
+
+      ;; First turn (initial prompt)
+      (multiple-value-bind (new-history success)
+          (handle-gemini-interaction initial-prompt conversation-history model tag)
+        (if success
+            (setf conversation-history new-history)
+            (return-from gemini-conversation nil)))
+
+      ;; If the initial turn was successful, proceed to the interactive loop
+      (when conversation-history
+        (setf conversation-history (gemini-chat-loop conversation-history model tag)))
+      conversation-history)))
 
 ;; Updated gemini-top function for robust command-line parsing and log tag derivation
 (defun gemini-top ()
@@ -338,28 +366,19 @@
         ;; Case A: No arguments left after tag (e.g., "gemini-chat" or "gemini-chat mytag")
         ((null remaining-args)
          (format t "~&Please enter your initial question or file path (e.g., /path/to/my/file.txt):~%")
-         (let* ((user-input (read-line))
-                (parsed-input (if (and (> (length user-input) 0) (char= (char user-input 0) #\/))
-                                  (subseq user-input 1)
-                                  user-input)))
-           (if (uiop:file-exists-p parsed-input)
-               ;; User entered a file path interactively
-               (let ((file-content (read-file-content parsed-input)))
-                 ;; Derive tag from file if still default
-                 (when (string-equal tag *default-conversation-tag*)
-                   (setf tag (pathname-name (parse-namestring parsed-input))))
-                 (if file-content
-                     (progn
-                       (format t "~&File '~a' loaded. Now, enter your instructions/question for Gemini about this file:~%" parsed-input)
-                       (let* ((user-instructions (read-line))
-                              (initial-prompt (format nil "File content from ~a:~%```~a```~%~%My instructions: ~a~%~{~a~}"
-                                                      parsed-input file-content user-instructions initial-prompt-parts)))
-                         (gemini-conversation initial-prompt :tag tag)))
-                     (progn
-                       (format t "~&Error: Could not read file '~a'. Please enter your initial question for Gemini directly:~%" parsed-input)
-                       (gemini-conversation (format nil "~a~%~{~a~}" (read-line) initial-prompt-parts) :tag tag))))
-               ;; User entered a direct prompt interactively
-               (gemini-conversation (format nil "~a~%~{~a~}" user-input initial-prompt-parts) :tag tag))))
+         (let* ((user-input (read-line)))
+           (multiple-value-bind (processed-input error-type)
+               (process-user-prompt-and-file user-input)
+             (if error-type
+                 (progn
+                   (format t "~&Initial prompt error, cannot proceed. Please restart.~%")
+                   (return-from gemini-top nil))
+                 (progn
+                   ;; Derive tag from file if still default (if user input was a file)
+                   (when (and (string-equal tag *default-conversation-tag*)
+                              (char= (char user-input 0) #\/))
+                     (setf tag (pathname-name (parse-namestring (subseq user-input 1)))))
+                   (gemini-conversation (format nil "~a~%~{~a~}" processed-input initial-prompt-parts) :tag tag))))))
 
         ;; Case B: First of 'remaining-args' is an existing file (e.g., "gemini-chat /path/file.txt analyze this"
         ;;         OR "gemini-chat mytag /path/file.txt analyze this")
