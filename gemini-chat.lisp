@@ -290,8 +290,6 @@
       (when conv-hist
         (setf conv-hist (chat-loop conv-hist model tag)))
       conv-hist)))
-
-
 ;; --- Define Flags using com.google.flag ---
 ;; com.google.flag handles --help automatically.
 ;; The `:help` string for each flag will appear in the generated help message.
@@ -373,6 +371,11 @@
     (values final-prompt *tag*))) ; <-- CHANGED from (flag-value 'tag)
 
 
+(defun start-chat (init-prompt tag &key (model "gemini-2.5-pro"))
+  "Initiates the Gemini conversation with the assembled initial prompt and tag."
+  (format t "Conversation tag is: [~a]~%" tag)
+  (gem-conv init-prompt :model model :tag tag))
+
 (defun run-chat (&rest raw-args)
   "Main entry point for the gemini-chat application.
    Handles argument parsing, initial prompt assembly, and starting the chat session."
@@ -393,7 +396,7 @@
 
     ;; Access flag values directly from their special variables
     (let* ((context-files *context*) ; <-- CHANGED from (flag-value 'context)
-           (actual-tag *tag*) ; <-- CHANGED from (flag-value 'tag)
+           (actual-tag *tag*)     ; <-- CHANGED from (flag-value 'tag)
            (ctx-content (proc-ctx-files context-files)))
 
       ;; Handle initial save command if -s was provided
@@ -416,6 +419,7 @@
    It retrieves arguments from sb-ext:*posix-argv* and passes them to run-chat."
   ;; com.google.flag:parse-command-line without :argv defaults to sb-ext:*posix-argv*
   ;; However, run-chat expects a list of strings, so pass (rest sb-ext:*posix-argv*)
+  (format t "Top: we have command line args of ~s~%" sb-ext:*posix-argv*)
   (run-chat (rest sb-ext:*posix-argv*)))
 
 (defun save-core ()
