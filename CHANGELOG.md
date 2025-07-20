@@ -1,6 +1,19 @@
 ---
 ## CHANGELOG.md
 ---
+## Version 1.3.8 - 2025-07-19
+
+### Changed
+
+-   **Refactored Command-Line Argument Parsing (`com.google.flag` Integration):**
+    -   Aligned flag definitions and access methods with the specific conventions of `com.google.flag` (formerly `cl-gflags`) as found in the current environment.
+    -   Corrected `define-flag` syntax, including proper use of `:help`, `:default-value`, and `:selector` keywords.
+    -   Ensured type compatibility for flag default values (e.g., using `""` for `STRING` types instead of `NIL`).
+    -   Modified the `context` flag to correctly handle multiple values by setting its `:type` to `list` and using a custom `string-identity-parser`.
+    -   Updated flag value access from `(flag-value 'flag-name)` to direct special variables (`*flag-name*` e.g., `*context*`, `*save*`, `*tag*`, `*input-file*`).
+    -   Replaced `(arguments)` with `(command-line)` for retrieving non-option command-line arguments.
+    -   Addressed various macroexpansion and binding errors by conforming to `com.google.flag`'s precise requirements for flag definition and variable visibility at compile time.
+
 ## Version 1.3.7 - 2025-07-19
 
 ### Changed

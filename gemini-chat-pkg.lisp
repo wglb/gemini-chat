@@ -2,7 +2,7 @@
 ;;;; This file defines the GEMINI-CHAT package.
 
 (defpackage #:gemini-chat
-  (:use #:cl #:xlg-lib)
+  (:use #:cl #:xlg-lib #:com.google.flag)
   (:import-from #:drakma #:http-request #:drakma-error) 
   (:import-from #:jsown #:to-json #:parse) 
   (:import-from #:uiop #:getenv #:slurp-stream-string)

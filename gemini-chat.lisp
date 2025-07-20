@@ -292,34 +292,54 @@
       conv-hist)))
 
 
-;; --- New functions for refactored top ---
-
-(defun print-help (parser)
-  "Prints the command-line help message and example usage."
-  (format t "~&gemini-chat version ~a~%~%" (get-version))
-  (cl-argparse:print-help parser *standard-output*) ; Use cl-argparse's help
-  (format t "~%---~%~%")
-  (format t "## Examples:~%~%")
-  (format t "```bash~%")
-  (format t "# Basic chat with an explicit tag and initial prompt~%")
-  (format t "./gemini-chat -t my-session \"Summarize the last quarter's sales report.~%~%")
-  (format t "~%# Include a context file and save output to a log~%")
-  (format t "./gemini-chat -c docs/project_info.txt -s session_log.txt \"Explain the new architecture design.\"~%")
-  (format t "~%# Use a local file as primary input and ask a follow-up question~%")
-  (format t "./gemini-chat -f data/report.csv -t csv-analysis \"What are the key trends in this data?\"~%")
-  (format t "~%# Interactive session (no initial prompt)~%")
-  (format t "./gemini-chat -t interactive-session~%")
-  (format t "```~%~%")
-  (format t "---~%~%")
-  (format t "Report any issues or suggestions!")
-  (finish-output))
+;; --- Define Flags using com.google.flag ---
+;; com.google.flag handles --help automatically.
+;; The `:help` string for each flag will appear in the generated help message.
 
 
-(defun initial-prompt (parsed-args ctx-content)
-  "Assembles the final initial prompt string for Gemini based on parsed arguments and context.
+;; --- Define Flags using com.google.flag ---
+
+;; Add this helper function somewhere in your gemini-chat.lisp,
+;; ideally near other utility functions or at the top level.
+(defun string-identity-parser (s)
+  "A parser function for com.google.flag that simply returns the string itself
+   and a success boolean T. Used for list flags where each element is a string."
+  (values s t))
+
+;; --- Define Flags using com.google.flag ---
+
+(define-flag *context* ; <-- CHANGED: Flag name now uses asterisk convention
+  :help "Path to a context file. Can be specified multiple times. Example: --context file1.txt --context file2.txt"
+  :type list
+  :parser string-identity-parser      ; <-- CHANGED: Removed the quote
+  :selector "context"
+  :default-value nil)
+
+(define-flag *save* ; <-- CHANGED: Flag name now uses asterisk convention
+  :help "File to save Gemini's responses to. Responses will be appended. Example: --save conversation.log"
+  :type string
+  :selector "save"
+  :default-value "")
+
+(define-flag *tag* ; <-- CHANGED: Flag name now uses asterisk convention
+  :help "A unique tag for the conversation logs (default: chat). Example: --tag my-session"
+  :type string
+  :selector "tag"
+  :default-value "chat")
+
+(define-flag *input-file* ; <-- CHANGED: Flag name now uses asterisk convention
+  :help "Path to a primary input file whose content will be sent to Gemini with your prompt. Example: --input-file my-code.lisp"
+  :type string
+  :selector "input_file"
+  :default-value "") 
+                                        
+;; --- Functions for refactored top ---
+
+(defun initial-prompt (ctx-content)
+  "Assembles the final initial prompt string for Gemini based on parsed flags and positional arguments.
    Returns (values final-prompt-string new-tag) or (values nil nil) on error."
-  (let* ((input-file-path (getf parsed-args :input-file))
-         (initial-prompt-text (getf parsed-args :args)) ; Non-option args
+  (let* ((input-file-path *input-file*) ; <-- CHANGED from (flag-value 'input-file)
+         (initial-prompt-text (command-line)) ; <-- CHANGED from (arguments)
          (final-prompt nil)
          (file-content nil)
          (prompt-from-cli (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" initial-prompt-text))))
@@ -349,33 +369,9 @@
       (t
        (setf final-prompt (format nil "~a~%~a" (or ctx-content "") prompt-from-cli))))
 
-    ;; Tag is now explicit from parsed-args
-    (values final-prompt (getf parsed-args :tag *d-tag*))))
+    ;; Tag is now explicit from *tag* (the special variable)
+    (values final-prompt *tag*))) ; <-- CHANGED from (flag-value 'tag)
 
-
-(defun parse-command-line (args)
-  "Parses the command-line arguments using cl-argparse."
-  (cl-argparse:parse-args args
-    (cl-argparse:parser (:usage (format nil "~a [options] [initial_prompt_text...]" (get-version)))
-      (cl-argparse:flag ("-h" "--help")
-        :help "Show help message and exit."
-        :action :help)
-      (cl-argparse:flag ("-c" "--context")
-        :arg-name "FILE"
-        :help "Path to a context file. Can be specified multiple times."
-        :collect t)
-      (cl-argparse:flag ("-s" "--save")
-        :arg-name "FILE"
-        :help "File to save Gemini's responses to.")
-      (cl-argparse:flag ("-t" "--tag")
-        :arg-name "TAG"
-        :help "A unique tag for the conversation logs (default: chat).")
-      (cl-argparse:flag ("-f" "--input-file")
-        :arg-name "FILE"
-        :help "Path to a primary input file whose content will be sent to Gemini with your prompt.")
-      (cl-argparse:positional "args"
-        :help "The initial prompt text to send to Gemini. If -f is used, this is additional instruction."
-        :collect t))))
 
 (defun run-chat (&rest raw-args)
   "Main entry point for the gemini-chat application.
@@ -389,37 +385,37 @@
     (format t "~&gemini-chat version ~a~%" ver)
 
     (handler-case
-        (let* ((parsed-args (parse-command-line cmd-args))
-               (context-files (getf parsed-args :context))
-               (save-file (getf parsed-args :save))
-               (actual-tag (getf parsed-args :tag *d-tag*))
-               (ctx-content (proc-ctx-files context-files)))
-
-          ;; Handle initial save command if -s was provided
-          (when save-file
-            (save-cmd (format nil ":save ~a" save-file) actual-tag))
-
-          (multiple-value-bind (f-prompt d-tag)
-              (initial-prompt parsed-args ctx-content)
-            (unless f-prompt
-              (format t "~&Initial prompt generation failed or user quit. Exiting.~%")
-              (return-from run-chat nil))
-
-            (start-chat f-prompt (or d-tag actual-tag)))) ; Use d-tag if initial-prompt derived one, else actual-tag
-      (cl-argparse:help-requested (c)
-        (print-help (cl-argparse:parser c))
-        (uiop:quit 0))
-      (cl-argparse:argparse-error (c)
-        (format t "~&Error parsing arguments: ~a~%" (cl-argparse:format-error c))
-        (print-help (cl-argparse:parser c))
-        (uiop:quit 1))
+        (parse-command-line cmd-args)
       (error (c)
-        (format t "~&An unexpected error occurred: ~a~%" c)
-        (uiop:quit 1)))))
+        (format t "~&Error parsing arguments: ~a~%" c)
+        (format t "~&Run with `--help` for usage information.~%")
+        (uiop:quit 1)))
+
+    ;; Access flag values directly from their special variables
+    (let* ((context-files *context*) ; <-- CHANGED from (flag-value 'context)
+           (actual-tag *tag*) ; <-- CHANGED from (flag-value 'tag)
+           (ctx-content (proc-ctx-files context-files)))
+
+      ;; Handle initial save command if -s was provided
+      (when (plusp (length *save*))
+        (save-cmd (format nil ":save ~a" *save*) actual-tag))
+
+      (multiple-value-bind (f-prompt d-tag)
+          (initial-prompt ctx-content) ; Initial prompt now gets context content directly
+        (unless f-prompt
+          (format t "~&Initial prompt generation failed or user quit. Exiting.~%")
+          (return-from run-chat nil))
+
+        ;; Assuming 'start-chat' is the orchestrator for 'gem-conv'
+        ;; If start-chat is not defined, you might want to call gem-conv directly here.
+        ;; For now, I'll keep the call to start-chat as is, but know it might need adjustment.
+        (start-chat f-prompt (or d-tag actual-tag)))))) ; Tag from initial-prompt or *tag*
 
 (defun top ()
   "Toplevel function for the compiled gemini-chat executable.
    It retrieves arguments from sb-ext:*posix-argv* and passes them to run-chat."
+  ;; com.google.flag:parse-command-line without :argv defaults to sb-ext:*posix-argv*
+  ;; However, run-chat expects a list of strings, so pass (rest sb-ext:*posix-argv*)
   (run-chat (rest sb-ext:*posix-argv*)))
 
 (defun save-core ()
