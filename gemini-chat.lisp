@@ -30,7 +30,7 @@
 ;; --- Define Flags using com.google.flag ---
 
 (define-flag *context* ; <-- CHANGED: Flag name now uses asterisk convention
-  :help "Path to a context file. Can be specified multiple times. Example: --context file1.txt --context file2.txt"
+  :help "Path to a context file. Can be specified multiple times. Example: --context file1.txt,file2.txt"
   :type list
   :parser string-identity-parser
   :selector "context"
@@ -55,7 +55,7 @@
   :default-value "")
 
 (define-flag *help-is*
-  :help "help me"
+  :help "Show this help message and exit." ; Corrected help string for --help
   :type boolean
   :selector "help"
   :default-value nil)
@@ -71,11 +71,14 @@
   (format t "~&gemini-chat version ~a~%~%" (get-version)) ; Added version to help
   (format t "Usage: ./gemini-chat [options] [tag] [initial_prompt | /path/to/file.txt]~%~%")
   (format t "Options:~%")
-  (format t "  -h, --help            Show this help message and exit.~%")
-  (format t "  -c, --context <file>  Specify a file to be included as initial context.~%~%")
+  (format t "  -h, --help               Show this help message and exit.~%")
+  (format t "  -c, --context <file1,file2,...> Specify a comma-separated list of files to be included as initial context.~%~%") ; <-- UPDATED THIS LINE
+  (format t "  -s, --save <file>        File to save Gemini's responses to (appends).~%") ; Added more explicit help for -s
+  (format t "  -t, --tag <tag>          A unique tag for conversation logs (default: 'chat').~%") ; Added help for -t
+  (format t "  -f, --input-file <file>  Path to a primary input file whose content will be sent with your prompt.~%~%") ; Added help for -f
   (format t "Interactive Commands (during chat loop):~%")
-  (format t "  :save <filename>      Start or change saving model responses to the specified file.~%")
-  (format t "  quit                  End the conversation.~%~%")
+  (format t "  :save <filename>         Start or change saving model responses to the specified file.~%")
+  (format t "  quit                     End the conversation.~%~%")
   (format t "Initial Prompt Options:~%")
   (format t "  If no initial prompt or file is given, the program will prompt you interactively.~%")
   (format t "  If the first argument is a path starting with '/', the file content will be loaded as the initial input.~%")
@@ -85,13 +88,13 @@
   (format t "## Example Flow:~%~%")
   (format t "To use the `gemini-chat` program with an input file, a context file, a defined output file, and chat input that references the input file, you'd use a command like this:~%~%")
   (format t "```bash~%")
-  (format t "./gemini-chat -c your_context_file.txt :save my_output.txt /path/to/your_input_file.txt \"Please summarize the content of the attached file and then answer my questions.\"~%")
+  (format t "./gemini-chat -c your_context_file.txt,:~~/another_context.md :save my_output.txt /path/to/your_input_file.txt \"Please summarize the content of the attached file and then answer my questions.\"~%")
   (format t "```~%~%")
   (format t "Let's break down the components of that command:~%~%")
   (format t "* **`./gemini-chat`**: This is how you'd typically execute the compiled program.~%")
-  (format t "* **`-c your_context_file.txt`** (or `--context your_context_file.txt`):~%")
-  (format t "    * `:-c` or `--context` is the option to specify a **context file**.~%")
-  (format t "    * `your_context_file.txt` is the path to the file whose content you want to provide as additional context to the Gemini model before it processes your main prompt. This is useful for providing background information, specific guidelines, or data that isn't directly part of your immediate query but should influence the model's response.~%")
+  (format t "* **`-c your_context_file.txt,:~~/another_context.md`** (or `--context your_context_file.txt,:~~/another_context.md`):~%")
+  (format t "    * `:-c` or `--context` is the option to specify a **context file(s)**.~%")
+  (format t "    * `your_context_file.txt,:~~/another_context.md` is a comma-separated list of paths to files whose content you want to provide as additional context to the Gemini model before it processes your main prompt. This is useful for providing background information, specific guidelines, or data that isn't directly part of your immediate query but should influence the model's response.~%")
   (format t "* **`:save my_output.txt`**:~%")
   (format t "    * `::save` is a special command *within* `gemini-chat` that tells it to direct the model's responses to a file.~%")
   (format t "    * `my_output.txt` is the name of the file where the conversation's output will be saved. The program will open this file and append Gemini's responses to it.~%")
@@ -106,7 +109,7 @@
   (format t "1.  You run the command:~%    ```bash~%")
   (format t "    ./gemini-chat -c my_project_docs.txt :save session_log.txt /home/bill/data/quarterly_report.csv~%")
   (format t "    ```~%")
-  (format t "2.  `gemini-chat` processes `my_project_docs.txt` as context.~%")
+  (format t "2.  `gemini-chat` processes `my_project_docs.txt` and `another_doc.txt` as context.~%")
   (format t "3.  It sets up `session_log.txt` to save the output.~%")
   (format t "4.  It reads `/home/bill/data/quarterly_report.csv`.~%")
   (format t "5.  You then see a prompt like:~%    ```~%")
@@ -115,7 +118,7 @@
   (format t "6.  You would type:~%    ```~%")
   (format t "    Based on the report, what were the key revenue drivers and what challenges are highlighted?~%")
   (format t "    ```~%")
-  (format t "7.  `gemini-chat` combines the context from `my_project_docs.txt`, the content of `quarterly_report.csv`, and your \"key revenue drivers\" prompt, sends it to Gemini, and logs the response to `session_log.txt` (and displays it to you).~%")
+  (format t "7.  `gemini-chat` combines the context from `my_project_docs.txt` and `another_doc.txt`, the content of `quarterly_report.csv`, and your \"key revenue drivers\" prompt, sends it to Gemini, and logs the response to `session_log.txt` (and displays it to you).~%")
   (format t "---~%~%")
   (finish-output))
 
