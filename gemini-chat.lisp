@@ -12,6 +12,9 @@
 (defparameter *run-out-s* nil
   "Stream for saving conversation answers during a conversation.")
 
+;; Global for help formatting
+(defparameter  *help-column-width* 80)
+
 ;; Function to retrieve the current version
 (defun get-version ()
   (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
@@ -29,36 +32,41 @@
 
 ;; --- Define Flags using com.google.flag ---
 
-(define-flag *context* ; <-- CHANGED: Flag name now uses asterisk convention
+(define-flag *context*
   :help "Path to a context file. Can be specified multiple times. Example: --context file1.txt,file2.txt"
   :type list
   :parser string-identity-parser
   :selector "context"
   :default-value nil)
 
-(define-flag *save* ; <-- CHANGED: Flag name now uses asterisk convention
+(define-flag *save*
   :help "File to save Gemini's responses to. Responses will be appended. Example: --save conversation.log"
   :type string
   :selector "save"
   :default-value "")
 
-(define-flag *tag* ; <-- CHANGED: Flag name now uses asterisk convention
+(define-flag *tag*
   :help "A unique tag for the conversation logs (default: chat). Example: --tag my-session"
   :type string
   :selector "tag"
   :default-value "chat")
 
-(define-flag *input-file* ; <-- CHANGED: Flag name now uses asterisk convention
+(define-flag *input-file*
   :help "Path to a primary input file whose content will be sent to Gemini with your prompt. Example: --input-file my-code.lisp"
   :type string
   :selector "input_file"
   :default-value "")
 
 (define-flag *help-is*
-  :help "Show this help message and exit." ; Corrected help string for --help
+  :help "Show this help message and exit."
   :type boolean
   :selector "help"
   :default-value nil)
+
+(defun s-s (str delim &key (rem-empty nil))
+  "Encapsulates calls to split-sequence. Splits a string by a single character delimiter.
+   :rem-empty T will remove empty strings from the result list."
+  (split-sequence:split-sequence delim str :remove-empty-subseqs rem-empty))
 
 (defun s/z (str)
   (zerop (length str)))
@@ -66,59 +74,153 @@
 (defun s/nz (str)
   (plusp (length str)))
 
+(defun wrap-par (paragraph-text indent-str column-width stream)
+  "Wraps a single paragraph to column-width, writing to stream.
+   Indents subsequent lines with indent-str.
+   Assumes paragraph-text is already trimmed of leading/trailing spaces for itself."
+  (let ((indent-len (length indent-str))
+        (line-pos 0)
+        ;; Use the new s-s
+        (words (s-s (string-trim '(#\Space #\Tab) paragraph-text) #\Space :rem-empty t)))
+
+    (unless (null words) ; Only process if there are words
+      (format stream "~a" indent-str)
+      (setf line-pos indent-len)
+
+      (loop for word in words
+            for first-word-on-line-p = t then nil
+            do (let ((word-len (length word)))
+                 (cond
+                   ;; If adding the word will exceed the column width, start a new line
+                   ((> (+ line-pos (if first-word-on-line-p 0 1) word-len) column-width)
+                    (format stream "~%~a~a" indent-str word)
+                    (setf line-pos (+ indent-len word-len))
+                    (setf first-word-on-line-p nil))
+                   ;; Otherwise, add it to the current line
+                   (t
+                    (unless first-word-on-line-p
+                      (format stream " "))
+                    (format stream "~a" word)
+                    (incf line-pos (+ word-len (if first-word-on-line-p 0 1)))
+                    (setf first-word-on-line-p nil))))))))
+
+(defun wrap-and-indent (text indent-str &optional (column-width *help-column-width*))
+  "Wraps the given text to column-width, indenting subsequent lines with indent-str.
+   Initial lines of paragraphs also start with indent-str.
+   Existing newlines in 'text' are treated as paragraph breaks.
+   Correctly handles leading/trailing whitespace and empty input."
+  (let* ((output (with-output-to-string (s)
+                   ;; Use the new s-s
+                   (loop for paragraph in (s-s text #\Newline :rem-empty nil)
+                         for first-paragraph-p = t then nil
+                         do (cond
+                              ;; If it's an empty line (explicit newline in input), output a blank line
+                              ((string= paragraph "")
+                               (unless first-paragraph-p (format s "~%"))
+                               (format s "~%"))
+                              ;; Process non-empty paragraph
+                              (t
+                               (unless first-paragraph-p (format s "~%"))
+                               (wrap-par (string-trim '(#\Space #\Tab) paragraph)
+                                               indent-str
+                                               column-width
+                                               s)))))))
+    ;; Remove any trailing newline if it's the only character or if it's not desired at the very end
+    (if (and (plusp (length output)) (char= (char output (1- (length output))) #\Newline))
+        (subseq output 0 (1- (length output)))
+        output)))
+
 (defun print-help ()
   "Prints the command-line help message and example usage."
-  (format t "~&gemini-chat version ~a~%~%" (get-version)) ; Added version to help
+  (format t "~&gemini-chat version ~a~%~%" (get-version))
   (format t "Usage: ./gemini-chat [options] [tag] [initial_prompt | /path/to/file.txt]~%~%")
   (format t "Options:~%")
   (format t "  -h, --help               Show this help message and exit.~%")
-  (format t "  -c, --context <file1,file2,...> Specify a comma-separated list of files to be included as initial context.~%~%") ; <-- UPDATED THIS LINE
-  (format t "  -s, --save <file>        File to save Gemini's responses to (appends).~%") ; Added more explicit help for -s
-  (format t "  -t, --tag <tag>          A unique tag for conversation logs (default: 'chat').~%") ; Added help for -t
-  (format t "  -f, --input-file <file>  Path to a primary input file whose content will be sent with your prompt.~%~%") ; Added help for -f
+  (format t "  -c, --context <file1,file2,...> Specify a comma-separated list of files to be included as initial context.~%~%")
+  (format t "  -s, --save <file>        File to save Gemini's responses to (appends).~%")
+  (format t "  -t, --tag <tag>          A unique tag for conversation logs (default: 'chat').~%")
+  (format t "  -f, --input-file <file>  Path to a primary input file whose content will be sent with your prompt.~%~%")
   (format t "Interactive Commands (during chat loop):~%")
   (format t "  :save <filename>         Start or change saving model responses to the specified file.~%")
   (format t "  quit                     End the conversation.~%~%")
   (format t "Initial Prompt Options:~%")
-  (format t "  If no initial prompt or file is given, the program will prompt you interactively.~%")
-  (format t "  If the first argument is a path starting with '/', the file content will be loaded as the initial input.~%")
-  (format t "  Otherwise, all subsequent arguments are treated as the initial prompt text.~%~%")
+  (format t "~a~%" (wrap-and-indent
+                      "If no initial prompt or file is given, the program will prompt you interactively."
+                      "  "))
+  (format t "~a~%" (wrap-and-indent
+                      "If the first argument is a path starting with '/', the file content will be loaded as the initial input."
+                      "  "))
+  (format t "~a~%~%" (wrap-and-indent
+                        "Otherwise, all subsequent arguments are treated as the initial prompt text."
+                        "  "))
 
   (format t "---~%~%")
   (format t "## Example Flow:~%~%")
-  (format t "To use the `gemini-chat` program with an input file, a context file, a defined output file, and chat input that references the input file, you'd use a command like this:~%~%")
+  (format t "~a~%" (wrap-and-indent
+                      "To use the `gemini-chat` program with an input file, a context file, a defined output file, and chat input that references the input file, you'd use a command like this:"
+                      ""))
   (format t "```bash~%")
   (format t "./gemini-chat -c your_context_file.txt,:~~/another_context.md :save my_output.txt /path/to/your_input_file.txt \"Please summarize the content of the attached file and then answer my questions.\"~%")
   (format t "```~%~%")
-  (format t "Let's break down the components of that command:~%~%")
-  (format t "* **`./gemini-chat`**: This is how you'd typically execute the compiled program.~%")
+  (format t "~a~%~%" (wrap-and-indent "Let's break down the components of that command:" ""))
+  (format t "* **`./gemini-chat`**: ~a~%~%" (wrap-and-indent "This is how you'd typically execute the compiled program." "    "))
   (format t "* **`-c your_context_file.txt,:~~/another_context.md`** (or `--context your_context_file.txt,:~~/another_context.md`):~%")
-  (format t "    * `:-c` or `--context` is the option to specify a **context file(s)**.~%")
-  (format t "    * `your_context_file.txt,:~~/another_context.md` is a comma-separated list of paths to files whose content you want to provide as additional context to the Gemini model before it processes your main prompt. This is useful for providing background information, specific guidelines, or data that isn't directly part of your immediate query but should influence the model's response.~%")
+  (format t "~a~%" (wrap-and-indent
+                      "* `:-c` or `--context` is the option to specify **context files**."
+                      "    "))
+  (format t "~a~%~%" (wrap-and-indent
+                        "* `your_context_file.txt,:~~/another_context.md` is a comma-separated list of paths to files whose content you want to provide as additional context to the Gemini model before it processes your main prompt. This is useful for providing background information, specific guidelines, or data that isn't directly part of your immediate query but should influence the model's response."
+                        "    "))
   (format t "* **`:save my_output.txt`**:~%")
-  (format t "    * `::save` is a special command *within* `gemini-chat` that tells it to direct the model's responses to a file.~%")
-  (format t "    * `my_output.txt` is the name of the file where the conversation's output will be saved. The program will open this file and append Gemini's responses to it.~%")
+  (format t "~a~%~%" (wrap-and-indent
+                        "* `::save` is a special command *within* `gemini-chat` that tells it to direct the model's responses to a file."
+                        "    "))
+  (format t "~a~%~%" (wrap-and-indent
+                        "* `my_output.txt` is the name of the file where the conversation's output will be saved. The program will open this file and append Gemini's responses to it."
+                        "    "))
   (format t "* **`/path/to/your_input_file.txt`**:~%")
-  (format t "    * When the first non-option argument on the command line starts with a `/` (indicating a file path), `gemini-chat` will read this file's content. This becomes the primary 'input file' for the current turn.~%")
-  (format t "    * The `gemini-chat` program will then prompt you for an **additional prompt** that will accompany the file content.~%")
+  (format t "~a~%" (wrap-and-indent
+                      "* When the first non-option argument on the command line starts with a `/` (indicating a file path), `gemini-chat` will read this file's content. This becomes the primary 'input file' for the current turn."
+                      "    "))
+  (format t "~a~%~%" (wrap-and-indent
+                        "* The `gemini-chat` program will then prompt you for an **additional prompt** that will accompany the file content."
+                        "    "))
   (format t "* **`\"Please summarize the content of the attached file and then answer my questions.\"`**:~%")
-  (format t "    * This is the **chat input** you'd type after `gemini-chat` prompts you, following the reading of `/path/to/your_input_file.txt`.~%")
-  (format t "    * This is where you provide instructions or questions *related to the content of the input file*.~%~%")
+  (format t "~a~%" (wrap-and-indent
+                      "* This is the **chat input** you'd type after `gemini-chat` prompts you, following the reading of `/path/to/your_input_file.txt`."
+                      "    "))
+  (format t "~a~%~%" (wrap-and-indent
+                        "* This is where you provide instructions or questions *related to the content of the input file*."
+                        "    "))
   (format t "---~%~%")
   (format t "### Example Flow:~%~%")
   (format t "1.  You run the command:~%    ```bash~%")
-  (format t "    ./gemini-chat -c my_project_docs.txt :save session_log.txt /home/bill/data/quarterly_report.csv~%")
+  (format t "    ./gemini-chat -c my_project_docs.txt,another_doc.txt :save session_log.txt /home/bill/data/quarterly_report.csv~%")
   (format t "    ```~%")
-  (format t "2.  `gemini-chat` processes `my_project_docs.txt` and `another_doc.txt` as context.~%")
-  (format t "3.  It sets up `session_log.txt` to save the output.~%")
-  (format t "4.  It reads `/home/bill/data/quarterly_report.csv`.~%")
-  (format t "5.  You then see a prompt like:~%    ```~%")
+  (format t "~a~%" (wrap-and-indent
+                      "2.  `gemini-chat` processes `my_project_docs.txt` and `another_doc.txt` as context."
+                      "    "))
+  (format t "~a~%" (wrap-and-indent
+                      "3.  It sets up `session_log.txt` to save the output."
+                      "    "))
+  (format t "~a~%" (wrap-and-indent
+                      "4.  It reads `/home/bill/data/quarterly_report.csv`."
+                      "    "))
+  (format t "~a~%" (wrap-and-indent
+                      "5.  You then see a prompt like:"
+                      "    "))
+  (format t "    ```~%")
   (format t "    File '/home/bill/data/quarterly_report.csv' loaded. Enter an additional prompt for Gemini (optional):~%")
   (format t "    ```~%")
-  (format t "6.  You would type:~%    ```~%")
+  (format t "~a~%" (wrap-and-indent
+                      "6.  You would type:"
+                      "    "))
+  (format t "    ```~%")
   (format t "    Based on the report, what were the key revenue drivers and what challenges are highlighted?~%")
   (format t "    ```~%")
-  (format t "7.  `gemini-chat` combines the context from `my_project_docs.txt` and `another_doc.txt`, the content of `quarterly_report.csv`, and your \"key revenue drivers\" prompt, sends it to Gemini, and logs the response to `session_log.txt` (and displays it to you).~%")
+  (format t "~a~%~%" (wrap-and-indent
+                        "7.  `gemini-chat` combines the context from `my_project_docs.txt` and `another_doc.txt`, the content of `quarterly_report.csv`, and your \"key revenue drivers\" prompt, sends it to Gemini, and logs the response to `session_log.txt` (and displays it to you)."
+                        "    "))
   (format t "---~%~%")
   (finish-output))
 
@@ -176,7 +278,6 @@
     (error (c)
       (error "Failed to parse JSON response: ~a" c))))
 
-
 (defun extract-txt (parsed-json)
   "Extracts the generated text from the parsed Gemini API JSON response using jsown accessors.
    Returns the text string or NIL if not found."
@@ -233,7 +334,7 @@
 (defun save-cmd (cmd-str tag)
   "Implements the ':save <filename>' command. Opens a new runtime output stream
    or closes the existing one."
-  (let* ((parts (split-sequence:split-sequence #\Space cmd-str :remove-empty-subseqs t))
+  (let* ((parts (s-s #\Space cmd-str :rem-empty t))
          (fpath (second parts)))
     (if fpath
         (handler-case
@@ -305,7 +406,6 @@
         (flush-all-log-streams)
         (values nil nil))))
 
-;; Helper functions for chat-loop refactoring
 (defun quit-cmd ()
   "Performs cleanup when the 'quit' command is issued."
   (format t "~&~%Ending conversation.~%")
@@ -325,7 +425,7 @@
     ((str-starts-with-p raw-in ":save ")
      (values :save raw-in))
     (t
-     (values :prompt raw-in)))) ; Now returns direct prompt or file path to be processed by initial-prompt
+     (values :prompt raw-in))))
 
 (defun proc-send-prompt (proc-prompt conv-hist model)
   "Processes a valid user prompt (which may include file content) and interacts with Gemini.
@@ -360,7 +460,6 @@
            (format t "~&Skipping turn due to input error.~%")
            (continue)))))))
 
-
 (defun gem-conv (init-prompt &key (model "gemini-2.5-pro") (tag *d-tag*))
   "Starts and manages a multi-turn conversation with the Gemini API.
    Takes an initial prompt, then allows for follow-up questions.
@@ -385,23 +484,14 @@
       (when conv-hist
         (setf conv-hist (chat-loop conv-hist model tag)))
       conv-hist)))
-;; --- Define Flags using com.google.flag ---
-;; com.google.flag handles --help automatically.
-;; The `:help` string for each flag will appear in the generated help message.
 
-
-;; --- Define Flags using com.google.flag ---
-
-;; Add this helper function somewhere in your gemini-chat.lisp,
-;; ideally near other utility functions or at the top level.
 (defun string-identity-parser (s)
   "A parser function for com.google.flag that simply returns the string itself
    and a success boolean T. Used for list flags where each element is a string."
   (let ((full-l nil))
     (mapc #'(lambda (k)
-              (format t "sip: k is ~s~%" k)
               (push k full-l))
-          (split-sequence:split-sequence #\, s))
+          (s-s #\, s))
     (values (reverse full-l) t)))
 
 ;; --- Functions for refactored top ---
@@ -499,5 +589,5 @@
   (sb-ext:save-lisp-and-die "gemini-chat"
                             :toplevel #'top
                             :save-runtime-options t
-                            ;:compression 22
+                            :compression 22
                             :executable t))
