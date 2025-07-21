@@ -538,7 +538,8 @@
   (xlgt :answer-log  "save ~s"  *save*)
   (xlgt :answer-log  "tag ~s"  *tag*)
   (xlgt :answer-log  "input_file ~s" *input-file*)
-  (xlgt :answer-log  "help ~s" *help-is*))
+  (xlgt :answer-log  "help ~s" *help-is*)
+  (xlgt :answer-log "remaining options ~s" *remaining-args*))
 
 (defun run-chat (&rest raw-args)
   "Main entry point for the gemini-chat application.
@@ -557,7 +558,16 @@
         (format t "~&Error parsing arguments: ~a~%, comand-args: ~s~%" c cmd-args)
         (format t "~&Run with `--help` for usage information.~%")
         (uiop:quit 1)))
+    (let ((badargs nil))
+      (mapc #'(lambda (m)
+                (if (string= "--" (subseq m 0 2))
+                    (push m badargs)))
+            *remaining-args*)
+      (when badargs
+        (xlgt :answer-log "Error--Unprocessed options: ~s, exiting." (reverse badargs))
+        (return-from run-chat)))
     (show-set-options)
+    
     ;; Access flag values directly from their special variables
     (cond (*help-is*
            (print-help))
@@ -590,5 +600,5 @@
   (sb-ext:save-lisp-and-die "gemini-chat"
                             :toplevel #'top
                             :save-runtime-options t
-                            :compression 22
+                            ;; :compression 22
                             :executable t))
