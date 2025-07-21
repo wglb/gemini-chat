@@ -23,11 +23,10 @@
   "Retrieves the Gemini API key from the GEMINI_API_KEY environment variable.
    Signals an error if the environment variable is not set.
    It first tries GEMINI_API_KEY, then falls back to _GEMINI_API_KEY_."
-  (let ((key (or (getenv "GEMINI_API_KEY")
-                 (getenv "_GEMINI_API_KEY_"))))
+  (let ((key (getenv "GEMINI_API_KEY")))
     (unless key
-      (error "Error: Neither GEMINI_API_KEY nor _GEMINI_API_KEY_ environment variables are set.
-              Please set one of them before running this program."))
+      (error "Error: The GEMINI_API_KEY  environment variable is set.
+              Please set this before running this program."))
     key))
 
 ;; --- Define Flags using com.google.flag ---
@@ -54,7 +53,7 @@
 (define-flag *input-file*
   :help "Path to a primary input file whose content will be sent to Gemini with your prompt. Example: --input-file my-code.lisp"
   :type string
-  :selector "input_file"
+  :selector "input-file"
   :default-value "")
 
 (define-flag *help-is*
@@ -62,6 +61,8 @@
   :type boolean
   :selector "help"
   :default-value nil)
+
+(defparameter *remaining-args* nil)
 
 (defun s-s (str delim &key (rem-empty nil))
   "Encapsulates calls to split-sequence. Splits a string by a single character delimiter.
@@ -110,7 +111,6 @@
    Existing newlines in 'text' are treated as paragraph breaks.
    Correctly handles leading/trailing whitespace and empty input."
   (let* ((output (with-output-to-string (s)
-                   ;; Use the new s-s
                    (loop for paragraph in (s-s text #\Newline :rem-empty nil)
                          for first-paragraph-p = t then nil
                          do (cond
@@ -334,7 +334,7 @@
 (defun save-cmd (cmd-str tag)
   "Implements the ':save <filename>' command. Opens a new runtime output stream
    or closes the existing one."
-  (let* ((parts (s-s #\Space cmd-str :rem-empty t))
+  (let* ((parts (s-s cmd-str #\Space :rem-empty t))
          (fpath (second parts)))
     (if fpath
         (handler-case
@@ -432,7 +432,6 @@
    Returns (values new-history success-p)."
   (gem-interact proc-prompt conv-hist model))
 
-
 (defun chat-loop (conv-hist model tag)
   "Manages the interactive follow-up turns of a Gemini conversation.
    Takes the current conversation history, model, and tag as input.
@@ -491,19 +490,16 @@
   (let ((full-l nil))
     (mapc #'(lambda (k)
               (push k full-l))
-          (s-s #\, s))
+          (s-s s  #\,))
     (values (reverse full-l) t)))
-
-;; --- Functions for refactored top ---
 
 (defun initial-prompt (ctx-content)
   "Assembles the final initial prompt string for Gemini based on parsed flags and positional arguments.
    Returns (values final-prompt-string new-tag) or (values nil nil) on error."
-  (let* ((initial-prompt-text (command-line)) ; <-- CHANGED from (arguments)
+  (let* ((initial-prompt-text *remaining-args*) 
          (final-prompt nil)
          (file-content nil)
          (prompt-from-cli (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" initial-prompt-text))))
-
     (when (s/nz *input-file*)
       (multiple-value-setq (file-content)
         (proc-usr-prompt-file *input-file*))
@@ -512,7 +508,7 @@
 
     (cond
       ;; Case 1: No initial prompt via CLI (neither -f nor non-option args), prompt interactively
-      ((and (s/nz *input-file*) (s/nz prompt-from-cli))
+      ((and (s/z *input-file*) (s/z prompt-from-cli))
        (format t "~&Please enter your initial question (or type 'quit' to end):~%")
        (let ((usr-in (read-line)))
          (when (string-equal usr-in "quit")
@@ -528,14 +524,21 @@
       ;; Case 3: Only direct prompt text provided
       (t
        (setf final-prompt (format nil "~a~%~a" (or ctx-content "") prompt-from-cli))))
-
-    ;; Tag is now explicit from *tag* (the special variable)
-    (values final-prompt *tag*))) ; <-- CHANGED from (flag-value 'tag) ; <-- CHANGED from (flag-value 'tag)
+    
+    (values final-prompt *tag*))) 
 
 (defun start-chat (init-prompt tag &key (model "gemini-2.5-pro"))
   "Initiates the Gemini conversation with the assembled initial prompt and tag."
   (format t "Conversation tag is: [~a]~%" tag)
   (gem-conv init-prompt :model model :tag tag))
+
+(defun show-set-options ()
+  (xlgt :answer-log "options as they are set")
+  (xlgt :answer-log  "context ~s" *context*)
+  (xlgt :answer-log  "save ~s"  *save*)
+  (xlgt :answer-log  "tag ~s"  *tag*)
+  (xlgt :answer-log  "input_file ~s" *input-file*)
+  (xlgt :answer-log  "help ~s" *help-is*))
 
 (defun run-chat (&rest raw-args)
   "Main entry point for the gemini-chat application.
@@ -549,23 +552,22 @@
     (format t "~&gemini-chat version ~a~%" ver)
 
     (handler-case
-        (parse-command-line  cmd-args)
+        (setf *remaining-args* (parse-command-line cmd-args))
       (error (c)
-        (format t "~&Error parsing arguments: ~a~%" c)
+        (format t "~&Error parsing arguments: ~a~%, comand-args: ~s~%" c cmd-args)
         (format t "~&Run with `--help` for usage information.~%")
         (uiop:quit 1)))
-
+    (show-set-options)
     ;; Access flag values directly from their special variables
     (cond (*help-is*
            (print-help))
-          (t (let* ((actual-tag *tag*)     ; <-- CHANGED from (flag-value 'tag)
-                    (ctx-content (proc-ctx-files *context*)))
-               ;; Handle initial save command if -s was provided
+          
+          (t (let* ((ctx-content (proc-ctx-files *context*)))
                (when (s/nz *save*)
-                 (save-cmd (format nil ":save ~a" *save*) actual-tag))
+                 (save-cmd (format nil ":save ~a" *save*) *tag*))
 
                (multiple-value-bind (f-prompt d-tag)
-                   (initial-prompt ctx-content) ; Initial prompt now gets context content directly
+                   (initial-prompt ctx-content)
                  (unless f-prompt
                    (format t "~&Initial prompt generation failed or user quit. Exiting.~%")
                    (return-from run-chat nil))
@@ -573,14 +575,13 @@
                  ;; Assuming 'start-chat' is the orchestrator for 'gem-conv'
                  ;; If start-chat is not defined, you might want to call gem-conv directly here.
                  ;; For now, I'll keep the call to start-chat as is, but know it might need adjustment.
-                 (start-chat f-prompt (or d-tag actual-tag))))))))
+                 (start-chat f-prompt (or d-tag *tag*))))))))
 
 (defun top ()
   "Toplevel function for the compiled gemini-chat executable.
    It retrieves arguments from sb-ext:*posix-argv* and passes them to run-chat."
   ;; com.google.flag:parse-command-line without :argv defaults to sb-ext:*posix-argv*
   ;; However, run-chat expects a list of strings, so pass (rest sb-ext:*posix-argv*)
-  (format t "Top: we have command line args of ~s~%" sb-ext:*posix-argv*)
   (run-chat (rest sb-ext:*posix-argv*)))
 
 (defun save-core ()
