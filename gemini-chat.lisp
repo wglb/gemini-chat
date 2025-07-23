@@ -560,7 +560,7 @@
         (uiop:quit 1)))
     (let ((badargs nil))
       (mapc #'(lambda (m)
-                (if (string= "--" (subseq m 0 2))
+                (if (and (> (length m ) 2 ) (string= "--" (subseq m 0 2)))
                     (push m badargs)))
             *remaining-args*)
       (when badargs
