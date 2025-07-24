@@ -312,16 +312,19 @@ Why?")))
 (defun read-file (fpath)
   "Reads the entire content of a file into a string.
    Returns NIL if the file cannot be read."
-  (handler-case
-      (uiop:read-file-string fpath)
-    (file-error (c)
-      (xlg :thinking-log "~&Error reading file ~a: ~a" fpath c)
-      (xlgt :answer-log "~&Error reading file ~a: ~a" fpath c)
-      nil)
-    (error (c)
-      (xlg :thinking-log "~&An unexpected error occurred while reading file ~a: ~a" fpath c)
-      (xlgt :answer-log "~&An unexpected error occurred while reading file ~a: ~a" fpath c)
-      nil)))
+  (cond ((probe-file fpath)
+        (handler-case
+            (uiop:read-file-string fpath)
+          (file-error (c)
+            (xlg :thinking-log "~&Error reading file ~a: ~a" fpath c)
+            (xlgt :answer-log "~&Error reading file ~a: ~a" fpath c)
+            nil)
+          (error (c)
+            (xlg :thinking-log "~&An unexpected error occurred while reading file ~a: ~a" fpath c)
+            (xlgt :answer-log "~&An unexpected error occurred while reading file ~a: ~a" fpath c)
+            nil)))
+        (t (xlgt :answer-log "~&No such file as ~a:" fpath)
+           (xlg :thinking-log "~&No such file as ~a:" fpath))))
 
 (defun proc-ctx-files (ctx-files)
   "Reads content from a list of context files and concatenates them.
@@ -368,8 +371,10 @@ Why?")))
 (defun proc-usr-prompt-file (fpath)
   "Reads content from a specified file path.
    Returns the file content string, or (values NIL :file-error) on failure."
-  (let ((fcontent (read-file fpath)))
-    (if fcontent
+  (let* ((fcontentf (read-file fpath))
+         (fcontent (format nil "===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]===~%"
+                            fpath fcontentf fpath)))
+    (if fcontentf
         fcontent
         (progn
           (format t "~&Error: Could not read file '~a'. Please try again.~%" fpath)
@@ -448,7 +453,7 @@ Why?")))
    Takes the current conversation history, model, and tag as input.
    Returns the final conversation history."
   (when *single-shot*
-    (xlgt :answer-log "~&~%Single shot, exiging")
+    (xlgt :answer-log "~&~%Single shot, exiting")
     (return-from chat-loop ""))
   (loop
     (xlgt :answer-log "~&~%Enter your next prompt (or type 'quit' to end, ':save <filename>' to save output):")
@@ -509,9 +514,9 @@ Why?")))
 
 ;; New function to get the default context file path
 (defun get-default-context-file ()
-  "Checks for 'context.lisp' in the current working directory.
+  "Checks for 'context.lsp' in the current working directory.
    Returns the full path if found, otherwise NIL."
-  (let ((default-path (uiop:merge-pathnames* "context.lisp" (uiop:getcwd))))
+  (let ((default-path (uiop:merge-pathnames* "context.lsp" (uiop:getcwd))))
     (when (uiop:file-exists-p default-path)
       (namestring default-path))))
 
@@ -543,7 +548,7 @@ Why?")))
       ;; Case 2: Input file provided, combine its content with the prompt
       ((s/nz actual-input-file)
        (setf final-prompt
-             (format nil "~a~%File content from ~a: (next line will be number one of the file)~%```~a```~%~%My prompt: ~a"
+             (format nil "~a~%File content from ~a: (next line will be number one of this file , show these line number references in the report)~%```~a```~%~%My prompt: ~a"
                      (or ctx-content "") actual-input-file file-content actual-initial-prompt-text)))
 
       ;; Case 3: Only direct prompt text provided
