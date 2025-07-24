@@ -370,9 +370,9 @@ Why?")))
 
 (defun proc-usr-prompt-file (fpath)
   "Reads content from a specified file path.
-   Returns the file content string, or (values NIL :file-error) on failure."
+   Returns the file content string, or (values NIL :file-error) on failure or non-existance of the file."
   (let* ((fcontentf (read-file fpath))
-         (fcontent (format nil "===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]===~%"
+         (fcontent (format nil "~&===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]===~%"
                             fpath fcontentf fpath)))
     (if fcontentf
         fcontent
