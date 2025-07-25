@@ -54,11 +54,12 @@
   :selector "tag"
   :default-value "chat")
 
-(define-flag *input-file*
-  :help "Path to a primary input file whose content will be sent to Gemini with your prompt. Example: --input-file my-code.lisp"
-  :type string
-  :selector "input-file"
-  :default-value "")
+(define-flag *input-files*
+  :help "Comma-separated list of input files whose content will be sent with your prompt. Example: --input-files my-code.lisp,data.csv"
+  :type list
+  :parser string-identity-parser
+  :selector "input-files"
+  :default-value nil)
 
 (define-flag *help-is*
   :help "Show this help message and exit."
@@ -143,95 +144,71 @@
 (defun print-help ()
   "Prints the command-line help message and example usage."
   (format t "~&gemini-chat version ~a~%~%" (get-version))
-  (format t "Usage: ./gemini-chat [options] [tag] [initial_prompt | /path/to/file.txt]~%~%")
+  (format t "Usage: ./gemini-chat [options] [initial_prompt]~%~%")
   (format t "Options:~%")
-  (format t "  -h, --help               Show this help message and exit.~%")
-  (format t "  -c, --context <file1,file2,...> Specify a comma-separated list of files to be included as initial context.~%~%")
-  (format t "  -s, --save <file>        File to save Gemini's responses to (appends).~%")
-  (format t "  -t, --tag <tag>          A unique tag for conversation logs (default: 'chat').~%")
-  (format t "  -f, --input-file <file>  Path to a primary input file whose content will be sent with your prompt.~%~%")
+  (format t "  -h, --help                     Show this help message and exit.~%")
+  (format t "  -c, --context <file1,file2,...>  Specify a comma-separated list of files to be included as initial context.~%")
+  (format t "  -f, --input-files <file1,file2,...> A comma-separated list of input files whose content will be sent with your prompt.~%")
+  (format t "  -s, --save <file>              File to save Gemini's responses to (appends).~%")
+  (format t "  -t, --tag <tag>                A unique tag for conversation logs (default: 'chat').~%~%")
   (format t "Interactive Commands (during chat loop):~%")
   (format t "  :save <filename>         Start or change saving model responses to the specified file.~%")
   (format t "  quit                     End the conversation.~%~%")
-  (format t "Initial Prompt Options:~%")
+  (format t "Initial Prompt:~%")
   (format t "~a~%" (wrap-and-indent
-                      "If no initial prompt or file is given, the program will prompt you interactively."
-                      "  "))
-  (format t "~a~%" (wrap-and-indent
-                      "If the first argument is a path starting with '/', the file content will be loaded as the initial input."
+                      "If no initial prompt or input files are given, the program will prompt you interactively."
                       "  "))
   (format t "~a~%~%" (wrap-and-indent
-                        "Otherwise, all subsequent arguments are treated as the initial prompt text."
+                        "Otherwise, all non-option arguments are treated as the initial prompt text."
                         "  "))
 
   (format t "---~%~%")
   (format t "## Example Flow:~%~%")
   (format t "~a~%" (wrap-and-indent
-                      "To use the `gemini-chat` program with an input file, a context file, a defined output file, and chat input that references the input file, you'd use a command like this:"
+                      "To use the `gemini-chat` program with input files, a context file, a defined output file, and a prompt that references the input files, you'd use a command like this:"
                       ""))
   (format t "```bash~%")
-  (format t "./gemini-chat -c your_context_file.txt,:~~/another_context.md :save my_output.txt /path/to/your_input_file.txt \"Please summarize the content of the attached file and then answer my questions.\"~%")
+  (format t "./gemini-chat -c your_context.md --input-files code.lisp,tests.lisp --save session.log \"Based on the attached Lisp code and its tests, please suggest improvements.\"~%")
   (format t "```~%~%")
   (format t "~a~%~%" (wrap-and-indent "Let's break down the components of that command:" ""))
   (format t "* **`./gemini-chat`**: ~a~%~%" (wrap-and-indent "This is how you'd typically execute the compiled program." "    "))
-  (format t "* **`-c your_context_file.txt,:~~/another_context.md`** (or `--context your_context_file.txt,:~~/another_context.md`):~%")
-  (format t "~a~%" (wrap-and-indent
-                      "* `:-c` or `--context` is the option to specify **context files**."
+  (format t "* **`-c your_context.md`** (or `--context your_context.md`):~%")
+  (format t "~a~%~%" (wrap-and-indent
+                      "`-c` or `--context` specifies a **context file**. Its content is provided to the model for background information that should influence the response, but isn't the primary subject of your query."
                       "    "))
+  (format t "* **`--input-files code.lisp,tests.lisp`** (or `-f code.lisp,tests.lisp`):~%")
   (format t "~a~%~%" (wrap-and-indent
-                        "* `your_context_file.txt,:~~/another_context.md` is a comma-separated list of paths to files whose content you want to provide as additional context to the Gemini model before it processes your main prompt. This is useful for providing background information, specific guidelines, or data that isn't directly part of your immediate query but should influence the model's response."
+                        "`--input-files` or `-f` specifies one or more **input files**. The content of these files is included directly in your prompt, enclosed in markers. This is for content you want the model to directly analyze, modify, or reference."
                         "    "))
-  (format t "* **`:save my_output.txt`**:~%")
+  (format t "* **`--save session.log`** (or `-s session.log`):~%")
   (format t "~a~%~%" (wrap-and-indent
-                        "* `::save` is a special command *within* `gemini-chat` that tells it to direct the model's responses to a file."
+                        "This flag tells `gemini-chat` to append all of the model's responses to the file `session.log`."
                         "    "))
+  (format t "* **`\"Based on the attached Lisp code...\"`**:~%")
   (format t "~a~%~%" (wrap-and-indent
-                        "* `my_output.txt` is the name of the file where the conversation's output will be saved. The program will open this file and append Gemini's responses to it."
-                        "    "))
-  (format t "* **`/path/to/your_input_file.txt`**:~%")
-  (format t "~a~%" (wrap-and-indent
-                      "* When the first non-option argument on the command line starts with a `/` (indicating a file path), `gemini-chat` will read this file's content. This becomes the primary 'input file' for the current turn."
+                      "This is the **initial prompt**. It's the main instruction or question for the model. All non-option arguments are combined to form this prompt."
                       "    "))
-  (format t "~a~%~%" (wrap-and-indent
-                        "* The `gemini-chat` program will then prompt you for an **additional prompt** that will accompany the file content."
-                        "    "))
-  (format t "* **`\"Please summarize the content of the attached file and then answer my questions.\"`**:~%")
-  (format t "~a~%" (wrap-and-indent
-                      "* This is the **chat input** you'd type after `gemini-chat` prompts you, following the reading of `/path/to/your_input_file.txt`."
-                      "    "))
-  (format t "~a~%~%" (wrap-and-indent
-                        "* This is where you provide instructions or questions *related to the content of the input file*."
-                        "    "))
   (format t "---~%~%")
-  (format t "### Example Flow:~%~%")
-  (format t "1. You run the command:~%    ```bash~%")
-  (format t "    ./gemini-chat -c my_project_docs.txt,another_doc.txt :save session_log.txt /home/bill/data/quarterly_report.csv~%")
-  (format t "    ```~%")
-  (format t "~a~%" (wrap-and-indent
-                      "2.  `gemini-chat` processes `my_project_docs.txt` and `another_doc.txt` as context."
-                      "    "))
-  (format t "~a~%" (wrap-and-indent
-                      "3.  It sets up `session_log.txt` to save the output."
-                      "    "))
-  (format t "~a~%" (wrap-and-indent
-                      "4.  It reads `/home/bill/data/quarterly_report.csv`."
-                      "    "))
-  (format t "~a~%" (wrap-and-indent
-                      "5.  You then see a prompt like:"
-                      "    "))
-  (format t "    ```~%")
-  (format t "    File '/home/bill/data/quarterly_report.csv' loaded. Enter an additional prompt for Gemini (optional):~%")
-  (format t "    ```~%")
-  (format t "~a~%" (wrap-and-indent
-                      "6. You would type:"
-                      "    "))
-  (format t "    ```~%")
-  (format t "    Based on the report, what were the key revenue drivers and what challenges are highlighted?~%")
-  (format t "    ```~%")
-  (format t "~a~%~%" (wrap-and-indent
-                        "7.  `gemini-chat` combines the context from `my_project_docs.txt` and `another_doc.txt`, the content of `quarterary_report.csv`, and your \"key revenue drivers\" prompt, sends it to Gemini, and logs the response to `session_log.txt` (and displays it to you)."
-                        "    "))
-  (format t "---~%~%")
+  (format t "### How the prompt is built:~%~%")
+  (format t "Internally, `gemini-chat` assembles these pieces into a single large prompt to send to the Gemini API. For the example above, the structure would look like this:~%~%")
+  (format t "```~%")
+  (format t "--- Context Files --~%")
+  (format t "File: your_context.md~%")
+  (format t "```... content of your_context.md ...```~%")
+  (format t "~%")
+  (format t "--- End Context Files --~%")
+  (format t "~%")
+  (format t "===BEGIN_FILE: [code.lisp]===~%")
+  (format t "... content of code.lisp ...~%")
+  (format t "===END_FILE: [code.lisp]===~%")
+  (format t "~%")
+  (format t "===BEGIN_FILE: [tests.lisp]===~%")
+  (format t "... content of tests.lisp ...~%")
+  (format t "===END_FILE: [tests.lisp]===~%")
+  (format t "~%")
+  (format t "My prompt: Based on the attached Lisp code and its tests, please suggest improvements.~%")
+  (format t "```~%~%")
+  (format t "This entire block of text is what gets sent to the model for the first turn of the conversation.~%~%")
   (finish-output))
 
 ;; --- JSOWN-specific data structure creation ---
@@ -368,18 +345,31 @@ Why?")))
           (format t "~&Usage: :save <filename>. No filename provided fpath ~s.~%" fpath)
           (setf *run-out-s* nil)))))
 
-(defun proc-usr-prompt-file (fpath)
-  "Reads content from a specified file path.
-   Returns the file content string, or (values NIL :file-error) on failure or non-existance of the file."
-  (let* ((fcontentf (read-file fpath))
-         (fcontent (format nil "~&===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]===~%"
-                            fpath fcontentf fpath)))
-    (if fcontentf
-        fcontent
-        (progn
-          (format t "~&Error: Could not read file '~a'. Please try again.~%" fpath)
-          (flush-all-log-streams)
-          (values nil :file-error)))))
+(defun set-gemini-output-file (filepath &key (append t))
+  "Sets the file where Gemini's responses will be saved.
+   If APPEND is T (default), responses are appended. If NIL, the file is overwritten.
+   This internally calls save-cmd."
+  (let ((if-exists-option (if append :append :supersede)))
+    (save-cmd (format nil ":save ~a" filepath) *d-tag* :if-exists if-exists-option)
+    (if append
+        (format t "~&Responses will be appended to '~a'.~%" filepath)
+        (format t "~&Responses will overwrite '~a'.~%" filepath))))
+
+(defun proc-input-files (input-files)
+  "Reads content from a list of input files and concatenates them using the BEGIN_FILE/END_FILE markers.
+   Returns a single string with all file contents, or (values nil :file-error) if any file cannot be read."
+  (when input-files
+    (let ((all-content (make-string-output-stream)))
+      (dolist (file input-files)
+        (let ((content (read-file file)))
+          (if content
+              (format all-content "~&===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]===~%~%"
+                      file content file)
+              (progn
+                (format t "~&Error: Could not read input file '~a'. Aborting prompt.~%" file)
+                (flush-all-log-streams)
+                (return-from proc-input-files (values nil :file-error))))))
+      (get-output-stream-string all-content))))
 
 (defun gem-interact (u-prompt conv-hist model)
   "Sends a user prompt to Gemini, gets a response, and updates history.
@@ -393,7 +383,6 @@ Why?")))
          (parsed-json (parse-api-resp resp-stream))
          (model-resp-txt (extract-txt parsed-json))
          (new-m-turn (msg-turn "model" (or model-resp-txt "Error: No response"))))
-
     (gem-turn-resp model-resp-txt parsed-json new-u-turn new-m-turn upd-hist :turn-type "follow-up turn")))
 
 (defun gem-turn-resp (model-resp-txt parsed-json u-turn m-turn conv-hist &key (turn-type "turn"))
@@ -520,40 +509,40 @@ Why?")))
     (when (uiop:file-exists-p default-path)
       (namestring default-path))))
 
-(defun initial-prompt (ctx-content &optional input-file-path initial-prompt-text)
+(defun initial-prompt (ctx-content &optional input-file-paths initial-prompt-text)
   "Assembles the final initial prompt string for Gemini based on provided components.
    Returns (values final-prompt-string success-p) or (values nil nil) on error.
    This version is suitable for both command-line and SLIME use."
-  (let* ((actual-input-file (or input-file-path *input-file*))
+  (let* ((actual-input-files (or input-file-paths *input-files*))
          (actual-initial-prompt-text (or initial-prompt-text
                                          (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" *remaining-args*))))
          (final-prompt nil)
-         (file-content nil))
+         (files-content nil))
 
-    (when (s/nz actual-input-file)
-      (multiple-value-setq (file-content)
-        (proc-usr-prompt-file actual-input-file))
-      (unless file-content
+    (when actual-input-files
+      (multiple-value-setq (files-content)
+        (proc-input-files actual-input-files))
+      (unless files-content
         (return-from initial-prompt (values nil nil)))) ; Error reading file
 
     (cond
-      ;; Case 1: No initial prompt via CLI/args and no input file, prompt interactively (only for command-line run-chat)
-      ((and (s/z actual-input-file) (s/z actual-initial-prompt-text) (null input-file-path) (null initial-prompt-text))
+      ;; Case 1: No initial prompt via CLI/args and no input files, prompt interactively
+      ((and (null actual-input-files) (s/z actual-initial-prompt-text) (null input-file-paths) (null initial-prompt-text))
        (format t "~&Please enter your initial question (or type 'quit' to end):~%")
        (let ((usr-in (read-line)))
          (when (string-equal usr-in "quit")
            (return-from initial-prompt (values nil nil)))
-         (setf final-prompt (format nil "~a~%~a" (or ctx-content "") usr-in))))
+         (setf final-prompt (format nil "~a~a~a"
+                                    (or ctx-content "")
+                                    (or files-content "")
+                                    usr-in))))
 
-      ;; Case 2: Input file provided, combine its content with the prompt
-      ((s/nz actual-input-file)
-       (setf final-prompt
-             (format nil "~a~%File content from ~a: ~%~a~%~%My prompt: ~a"
-                     (or ctx-content "") actual-input-file file-content actual-initial-prompt-text)))
-
-      ;; Case 3: Only direct prompt text provided
+      ;; Case 2: Input files and/or prompt text provided
       (t
-       (setf final-prompt (format nil "~a~%~a" (or ctx-content "") actual-initial-prompt-text))))
+       (setf final-prompt (format nil "~a~aMy prompt: ~a"
+                                  (or ctx-content "")
+                                  (or files-content "")
+                                  actual-initial-prompt-text))))
 
     (values final-prompt t))) ; Return T for success
 
@@ -567,7 +556,7 @@ Why?")))
   (xlgt :answer-log "context ~s" *context*)
   (xlgt :answer-log "save ~s" *save*)
   (xlgt :answer-log "tag ~s" *tag*)
-  (xlgt :answer-log "input_file ~s" *input-file*)
+  (xlgt :answer-log "input_files ~s" *input-files*)
   (xlgt :answer-log "help ~s" *help-is*)
   (xlgt :answer-log "remaining options ~s" *remaining-args*))
 
@@ -625,7 +614,7 @@ Why?")))
    It retrieves arguments from sb-ext:*posix-argv* and passes them to run-chat."
   ;; com.google.flag:parse-command-line without :argv defaults to sb-ext:*posix-argv*
   ;; However, run-chat expects a list of strings, so pass (rest sb-ext:*posix-argv*)
-  (format t "Top: we have command line args of ~s~%" sb-ext:*posix-argv*)
+  (format t "Top: we have command line args of ~%~s~%" sb-ext:*posix-argv*)
   (run-chat (rest sb-ext:*posix-argv*)))
 
 (defun save-core ()
@@ -639,11 +628,11 @@ Why?")))
 
 ;; --- SLIME-specific Convenience Functions ---
 
-(defun slime-chat (prompt &key (input-file nil) (context-files nil) (save-file nil) (model "gemini-2.5-pro") (tag *d-tag*))
+(defun slime-chat (prompt &key (input-files nil) (context-files nil) (save-file nil) (model "gemini-2.5-pro") (tag *d-tag*))
   "A convenient function to send a request to Gemini from SLIME.
    Arguments:
    - PROMPT: The main text prompt for Gemini.
-   - :INPUT-FILE: Optional. Path to a file whose content will be sent as part of the prompt.
+   - :INPUT-FILES: Optional. A list of paths to files whose content will be sent as part of the prompt.
    - :CONTEXT-FILES: Optional. A list of paths to context files. Defaults to 'context.lisp' if present in CWD.
    - :SAVE-FILE: Optional. Path to a file where Gemini's responses will be appended.
    - :MODEL: Optional. The Gemini model to use (default: 'gemini-2.5-pro').
@@ -655,13 +644,14 @@ Why?")))
     (set-log-file-base (format nil "slime-chat-~a" tag)))
 
   ;; Handle context files, preferring explicitly provided, then default
-  (let ((actual-context-files (if context-files
-                                  context-files
-                                  (let ((default-ctx (get-default-context-file)))
-                                    (if default-ctx (list default-ctx) nil)))))
+  (let* ((actual-context-files (if context-files
+                                   context-files
+                                   (let ((default-ctx (get-default-context-file)))
+                                     (if default-ctx (list default-ctx) nil))))
+         (ctx-content (proc-ctx-files actual-context-files)))
     (format t "~&Starting SLIME chat session...~%")
     (format t "Prompt: ~a~%" prompt)
-    (when input-file (format t "Input File: ~a~%" input-file))
+    (when input-files (format t "Input Files: ~a~%" input-files))
     (when actual-context-files (format t "Context Files: ~a~%" actual-context-files))
     (when save-file (format t "Save File: ~a~%" save-file))
     (format t "Model: ~a~%" model)
@@ -672,7 +662,7 @@ Why?")))
       (save-cmd (format nil ":save ~a" save-file) tag :if-exists :append)) ; Explicitly append
 
     (multiple-value-bind (assembled-prompt success-p)
-        (initial-prompt actual-context-files input-file prompt) ; Pass actual-context-files instead of ctx-content here
+        (initial-prompt ctx-content input-files prompt)
       (unless success-p
         (format t "~&Failed to assemble initial prompt. Exiting SLIME chat.~%")
         (return-from slime-chat nil))
@@ -687,12 +677,3 @@ Why?")))
           (close *run-out-s*)
           (setf *run-out-s* nil))))))
 
-(defun set-gemini-output-file (filepath &key (append t))
-  "Sets the file where Gemini's responses will be saved.
-   If APPEND is T (default), responses are appended. If NIL, the file is overwritten.
-   This internally calls save-cmd."
-  (let ((if-exists-option (if append :append :supersede)))
-    (save-cmd (format nil ":save ~a" filepath) *d-tag* :if-exists if-exists-option)
-    (if append
-        (format t "~&Responses will be appended to '~a'.~%" filepath)
-        (format t "~&Responses will overwrite '~a'.~%" filepath))))
