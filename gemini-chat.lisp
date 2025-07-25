@@ -548,7 +548,7 @@ Why?")))
       ;; Case 2: Input file provided, combine its content with the prompt
       ((s/nz actual-input-file)
        (setf final-prompt
-             (format nil "~a~%File content from ~a: (next line will be number one of this file , show these line number references in the report)~%```~a```~%~%My prompt: ~a"
+             (format nil "~a~%File content from ~a: ~%~a~%~%My prompt: ~a"
                      (or ctx-content "") actual-input-file file-content actual-initial-prompt-text)))
 
       ;; Case 3: Only direct prompt text provided
