@@ -7,4 +7,5 @@
   (:import-from #:jsown #:to-json #:parse) 
   (:import-from #:uiop #:getenv #:slurp-stream-string)
   (:export #:run-gemini-conversation
-           #:make-gemini-api-request))
+           #:make-gemini-api-request
+           #:run-chat))
