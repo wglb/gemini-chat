@@ -339,7 +339,7 @@ Why?")))
               (setf *run-out-s* (open fpath :direction :output :if-exists if-exists :if-does-not-exist :create))
               (format t "~&Saving conversation answers to: ~a (if-exists: ~a)~%" fpath if-exists)
               (xlgt :answer-log "~&Saving conversation answers to: ~a (if-exists: ~a)~%" fpath if-exists)
-              (format *run-out-s* "~&--- Runtime Conversation Answers Log Started (~a) ---~%~%" tag))
+              #+nil (format *run-out-s* "~&--- Runtime Conversation Answers Log Started (~a) ---~%~%" tag))
           (file-error (c)
             (format t "~&Error opening file for saving: ~a~%" c)
             (xlgt :answer-log "~&Error opening file for saving: ~a~%" c)
@@ -397,7 +397,7 @@ Why?")))
       (progn
         (xlgt :answer-log "~&Gemini: ~a" model-resp-txt)
         (when *run-out-s*
-          (format *run-out-s* "~&Gemini: ~a~%" model-resp-txt)
+          (format *run-out-s* "~&~a~%" model-resp-txt)
           (finish-output *run-out-s*)) ; Ensure content is written immediately
         ;; Log the specific user and model turns involved in this step
         (xlg :thinking-log "Turns processed: ~s" (list u-turn m-turn))
