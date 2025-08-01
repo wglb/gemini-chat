@@ -679,6 +679,14 @@
   (format t "Top: we have command line args of ~%~s~%" sb-ext:*posix-argv*)
   (run-chat (rest sb-ext:*posix-argv*)))
 
+(defun save-core-uncompressed ()
+  "Saves the current Lisp image as an uncompressed executable for faster development."
+  (format t "Building gemini-chat version ~a (uncompressed)~%" (get-version))
+  (sb-ext:save-lisp-and-die "gemini-chat"
+                            :toplevel #'top
+                            :save-runtime-options t
+                            :executable t))
+
 (defun save-core ()
   "Saves the current Lisp image as an executable."
   (format t "Building gemini-chat version ~a~%" (get-version))
@@ -687,4 +695,3 @@
                             :save-runtime-options t
                             :compression 22
                             :executable t))
-
