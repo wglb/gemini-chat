@@ -434,43 +434,46 @@
   (when *single-shot*
     (xlgt :answer-log "~&~%Single shot, exiting")
     (return-from chat-loop ""))
-  (loop
-    (xlgt :answer-log "~&~%Enter your next prompt (or type 'quit' to end, ':save <filename>' to save output):")
-    (let ((raw-usr-in (read-line)))
+  (let ((pending-input-content nil))
+    (loop
+      (xlgt :answer-log "~&~%Enter your next prompt (or type 'quit' to end, ':save <filename>' to save output, ':input <filename>' to add a file):")
+      (let ((raw-usr-in (read-line)))
 
-      (multiple-value-bind (cmd-type cmd-data)
-          (read-usr-cmd raw-usr-in)
-        (ecase cmd-type
-          (:quit
-           (quit-cmd)
-           (return conv-hist))          ; Exit loop and return history
-          (:save
-           (save-cmd cmd-data tag) ; cmd-data is the full ":save <filename>" string
-           (continue))             ; Continue to next loop iteration
-          (:input
-           (let* ((file-list-str (string-trim '(#\Space) (subseq cmd-data 6)))
-                  (file-list (s-s file-list-str #\,)))
-             (multiple-value-bind (files-content file-read-status)
-                 (proc-input-files file-list)
-               (cond
-                 ((eq file-read-status :file-error)
-                  (format t "~&Skipping turn due to file input error.~%")
-                  (continue))
-                 (t
-                  (multiple-value-bind (new-total-hist success)
-                      (proc-send-prompt files-content conv-hist model)
-                    (if success
-                        (setf conv-hist new-total-hist)
-                        (return conv-hist)))))))
-          (:prompt
-           (multiple-value-bind (new-total-hist success)
-               (proc-send-prompt cmd-data conv-hist model) ; cmd-data is already the prompt string
-             (if success
-                 (setf conv-hist new-total-hist)
-                 (return conv-hist))))  ; Return history on error
-          (:error ; This case should not be reached with the new proc-usr-prompt-file
-           (format t "~&Skipping turn due to input error.~%")
-           (continue)))))))
+        (multiple-value-bind (cmd-type cmd-data)
+            (read-usr-cmd raw-usr-in)
+          (ecase cmd-type
+            (:quit
+             (quit-cmd)
+             (return conv-hist))          ; Exit loop and return history
+            (:save
+             (save-cmd cmd-data tag) ; cmd-data is the full ":save <filename>" string
+             (continue))             ; Continue to next loop iteration
+            (:input
+             (let* ((file-list-str (string-trim '(#\Space) (subseq cmd-data 6)))
+                    (file-list (s-s file-list-str #\,)))
+               (multiple-value-bind (files-content file-read-status)
+                   (proc-input-files file-list)
+                 (cond
+                   ((eq file-read-status :file-error)
+                    (format t "~&Skipping turn due to file input error.~%")
+                    (continue))
+                   (t
+                    (setf pending-input-content files-content)
+                    (format t "~&File(s) content loaded. It will be sent with your next prompt. Enter your prompt now:~%")
+                    (continue))))))
+            (:prompt
+             (let ((final-prompt-text (if pending-input-content
+                                          (format nil "~a~a" pending-input-content cmd-data)
+                                          cmd-data)))
+               (multiple-value-bind (new-total-hist success)
+                   (proc-send-prompt final-prompt-text conv-hist model)
+                 (if success
+                     (setf conv-hist new-total-hist)
+                     (return conv-hist)))
+               (setf pending-input-content nil))) ; Clear the pending content after use
+            (:error
+             (format t "~&Skipping turn due to input error.~%")
+             (continue))))))))
 
 (defun gem-conv (init-prompt &key (model "gemini-2.5-pro") (tag *d-tag*))
   "Starts and manages a multi-turn conversation with the Gemini API.
@@ -617,23 +620,6 @@
 
                  (start-chat f-prompt *tag*)))))))
 
-(defun top ()
-  "Toplevel function for the compiled gemini-chat executable.
-   It retrieves arguments from sb-ext:*posix-argv* and passes them to run-chat."
-  ;; com.google.flag:parse-command-line without :argv defaults to sb-ext:*posix-argv*
-  ;; However, run-chat expects a list of strings, so pass (rest sb-ext:*posix-argv*)
-  (format t "Top: we have command line args of ~%~s~%" sb-ext:*posix-argv*)
-  (run-chat (rest sb-ext:*posix-argv*)))
-
-(defun save-core ()
-  "Saves the current Lisp image as an executable."
-  (format t "Building gemini-chat version ~a~%" (get-version))
-  (sb-ext:save-lisp-and-die "gemini-chat"
-                            :toplevel #'top
-                            :save-runtime-options t
-                            :compression 22
-                            :executable t))
-
 ;; --- SLIME-specific Convenience Functions ---
 
 (defun slime-chat (prompt &key (input-files nil) (context-files nil) (save-file nil) (model "gemini-2.5-pro") (tag *d-tag*))
@@ -684,3 +670,21 @@
           (format t "~&Closing save file: ~a~%" (file-namestring (pathname *run-out-s*)))
           (close *run-out-s*)
           (setf *run-out-s* nil))))))
+
+(defun top ()
+  "Toplevel function for the compiled gemini-chat executable.
+   It retrieves arguments from sb-ext:*posix-argv* and passes them to run-chat."
+  ;; com.google.flag:parse-command-line without :argv defaults to sb-ext:*posix-argv*
+  ;; However, run-chat expects a list of strings, so pass (rest sb-ext:*posix-argv*)
+  (format t "Top: we have command line args of ~%~s~%" sb-ext:*posix-argv*)
+  (run-chat (rest sb-ext:*posix-argv*)))
+
+(defun save-core ()
+  "Saves the current Lisp image as an executable."
+  (format t "Building gemini-chat version ~a~%" (get-version))
+  (sb-ext:save-lisp-and-die "gemini-chat"
+                            :toplevel #'top
+                            :save-runtime-options t
+                            :compression 22
+                            :executable t))
+
