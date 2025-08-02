@@ -76,8 +76,7 @@
 (defparameter *remaining-args* nil)
 
 (defun s-s (str delim &key (rem-empty nil))
-  "Encapsulates calls to split-sequence.
-   Splits a string by a single character delimiter.
+  "Encapsulates calls to split-sequence. Splits a string by a single character delimiter.
    :rem-empty T will remove empty strings from the result list."
   (split-sequence:split-sequence delim str :remove-empty-subseqs rem-empty))
 
@@ -135,7 +134,7 @@
                                (wrap-par (string-trim '(#\Space #\Tab) paragraph)
                                          indent-str
                                          column-width
-                                         s))))))) 
+                                         s)))))))
     ;; Remove any trailing newline if it's the only character or if it's not desired at the very end
     (if (and (plusp (length output)) (char= (char output (1- (length output))) #\Newline))
         (subseq output 0 (1- (length output)))
@@ -146,48 +145,35 @@
   (format t "~&gemini-chat version ~a~%~%" (get-version))
   (format t "Usage: ./gemini-chat [options] [initial_prompt]~%~%")
   (format t "Options:~%")
-  (format t "  -h, --help                     Show this help message and exit.~%")
-  (format t "  -c, --context <file1,file2,...>  Specify a comma-separated list of files to be included as initial context.~%")
-  (format t "  -f, --input-files <file1,file2,...> A comma-separated list of input files whose content will be sent with your prompt.~%")
-  (format t "  -s, --save <file>              File to save Gemini's responses to (appends).~%")
-  (format t "  -t, --tag <tag>                A unique tag for conversation logs (default: 'chat').~%~%")
+  (format t "  --help                           Show this help message and exit.~%")
+  (format t "  --context <file1,file2,...>      Specify a comma-separated list of files to be included as initial context.~%")
+  (format t "  --input-files <file1,file2,...>  A comma-separated list of input files whose content will be sent with your prompt.~%")
+  (format t "  --save <file>                    File to save Gemini's responses to (appends).~%")
+  (format t "  --tag <tag>                      A unique tag for conversation logs (default: 'chat').~%~%")
   (format t "Interactive Commands (during chat loop):~%")
-  (format t "  :save <filename>         Start or change saving model responses to the specified file.~%")
-  (format t "  quit                     End the conversation.~%~%")
+  (format t "  :input <file1,file2,...>         Add file content to the next prompt.~%")
+  (format t "  :save <filename>                 Start or change saving model responses to the specified file.~%")
+  (format t "  quit                             End the conversation.~%~%")
   (format t "Initial Prompt:~%")
-  (format t "~a~%" (wrap-and-indent
-                      "If no initial prompt or input files are given, the program will prompt you interactively."
-                      "  "))
-  (format t "~a~%~%" (wrap-and-indent
-                        "Otherwise, all non-option arguments are treated as the initial prompt text."
-                        "  "))
+  (format t "~a~%" (wrap-and-indent "If no initial prompt or input files are given, the program will prompt you interactively." "  "))
+  (format t "~a~%~%" (wrap-and-indent "Otherwise, all non-option arguments are treated as the initial prompt text." "  "))
 
   (format t "---~%~%")
   (format t "## Example Flow:~%~%")
-  (format t "~a~%" (wrap-and-indent
-                      "To use the `gemini-chat` program with input files, a context file, a defined output file, and a prompt that references the input files, you'd use a command like this:"
-                      ""))
+  (format t "~a~%" (wrap-and-indent "To use the `gemini-chat` program with input files, a context file, a defined output file, and a prompt that references the input files, you'd use a command like this:" ""))
   (format t "```bash~%")
-  (format t "./gemini-chat -c your_context.md --input-files code.lisp,tests.lisp --save session.log \"Based on the attached Lisp code and its tests, please suggest improvements.\"~%")
+  (format t "./gemini-chat --context your_context.md --input-files code.lisp,tests.lisp --save session.log \"Based on the attached Lisp code and its tests, please suggest improvements.\"~%")
   (format t "```~%~%")
   (format t "~a~%~%" (wrap-and-indent "Let's break down the components of that command:" ""))
   (format t "* **`./gemini-chat`**: ~a~%~%" (wrap-and-indent "This is how you'd typically execute the compiled program." "    "))
-  (format t "* **`-c your_context.md`** (or `--context your_context.md`):~%")
-  (format t "~a~%~%" (wrap-and-indent
-                      "`-c` or `--context` specifies a **context file**. Its content is provided to the model for background information that should influence the response, but isn't the primary subject of your query."
-                      "    "))
-  (format t "* **`--input-files code.lisp,tests.lisp`** (or `-f code.lisp,tests.lisp`):~%")
-  (format t "~a~%~%" (wrap-and-indent
-                        "`--input-files` or `-f` specifies one or more **input files**. The content of these files is included directly in your prompt, enclosed in markers. This is for content you want the model to directly analyze, modify, or reference."
-                        "    "))
-  (format t "* **`--save session.log`** (or `-s session.log`):~%")
-  (format t "~a~%~%" (wrap-and-indent
-                        "This flag tells `gemini-chat` to append all of the model's responses to the file `session.log`."
-                        "    "))
+  (format t "* **`--context your_context.md`**:~%")
+  (format t "~a~%~%" (wrap-and-indent "`--context` specifies a **context file**. Its content is provided to the model for background information that should influence the response, but isn't the primary subject of your query." "    "))
+  (format t "* **`--input-files code.lisp,tests.lisp`**:~%")
+  (format t "~a~%~%" (wrap-and-indent "`--input-files` specifies one or more **input files**. The content of these files is included directly in your prompt, enclosed in markers. This is for content you want the model to directly analyze, modify, or reference." "    "))
+  (format t "* **`--save session.log`**:~%")
+  (format t "~a~%~%" (wrap-and-indent "This flag tells `gemini-chat` to append all of the model's responses to the file `session.log`." "    "))
   (format t "* **`\"Based on the attached Lisp code...\"`**:~%")
-  (format t "~a~%~%" (wrap-and-indent
-                      "This is the **initial prompt**. It's the main instruction or question for the model. All non-option arguments are combined to form this prompt."
-                      "    "))
+  (format t "~a~%~%" (wrap-and-indent "This is the **initial prompt**. It's the main instruction or question for the model. All non-option arguments are combined to form this prompt." "    "))
   (format t "---~%~%")
   (format t "### How the prompt is built:~%~%")
   (format t "Internally, `gemini-chat` assembles these pieces into a single large prompt to send to the Gemini API. For the example above, the structure would look like this:~%~%")
@@ -274,32 +260,31 @@
                (xlg :thinking-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
                (xlgt :answer-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
                nil)
-           (let* ((candidates (jsown:val parsed-json "candidates"))
-                   (first-candidate (car candidates)))
-             (when first-candidate
-               (let* ((content (jsown:val first-candidate "content"))
-                      (parts (jsown:val content "parts"))
-                      (first-part (car parts)))
-                 (when first-part
-                   (jsown:val first-part "text")))))))
+             (let* ((candidates (jsown:val parsed-json "candidates"))
+                    (first-candidate (car candidates)))
+               (when first-candidate
+                 (let* ((content (jsown:val first-candidate "content"))
+                        (parts (jsown:val content "parts"))
+                        (first-part (car parts)))
+                   (when first-part
+                     (jsown:val first-part "text")))))))
         (t (xlgt :answer-log "No parsed json available: ~a" parsed-json)
-           "No parsed json available.
-Why?")))
+           "No parsed json available. Why?")))
 
 (defun read-file (fpath)
   "Reads the entire content of a file into a string.
    Returns NIL if the file cannot be read."
   (cond ((probe-file fpath)
-        (handler-case
-            (uiop:read-file-string fpath)
-          (file-error (c)
-            (xlg :thinking-log "~&Error reading file ~a: ~a" fpath c)
-            (xlgt :answer-log "~&Error reading file ~a: ~a" fpath c)
-            nil)
-          (error (c)
-            (xlg :thinking-log "~&An unexpected error occurred while reading file ~a: ~a" fpath c)
-            (xlgt :answer-log "~&An unexpected error occurred while reading file ~a: ~a" fpath c)
-            nil)))
+         (handler-case
+             (uiop:read-file-string fpath)
+           (file-error (c)
+             (xlg :thinking-log "~&Error reading file ~a: ~a" fpath c)
+             (xlgt :answer-log "~&Error reading file ~a: ~a" fpath c)
+             nil)
+           (error (c)
+             (xlg :thinking-log "~&An unexpected error occurred while reading file ~a: ~a" fpath c)
+             (xlgt :answer-log "~&An unexpected error occurred while reading file ~a: ~a" fpath c)
+             nil)))
         (t (xlgt :answer-log "~&No such file as ~a:" fpath)
            (xlg :thinking-log "~&No such file as ~a:" fpath))))
 
@@ -432,6 +417,8 @@ Why?")))
      (values :quit nil))
     ((str-starts-with-p raw-in ":save ")
      (values :save raw-in))
+    ((str-starts-with-p raw-in ":input ")
+     (values :input raw-in))
     (t
      (values :prompt raw-in))))
 
@@ -447,28 +434,46 @@ Why?")))
   (when *single-shot*
     (xlgt :answer-log "~&~%Single shot, exiting")
     (return-from chat-loop ""))
-  (loop
-    (xlgt :answer-log "~&~%Enter your next prompt (or type 'quit' to end, ':save <filename>' to save output):")
-    (let ((raw-usr-in (read-line)))
+  (let ((pending-input-content nil))
+    (loop
+      (xlgt :answer-log "~&~%Enter your next prompt (or type 'quit' to end, ':save <filename>' to save output, ':input <filename>' to add a file):")
+      (let ((raw-usr-in (read-line)))
 
-      (multiple-value-bind (cmd-type cmd-data)
-          (read-usr-cmd raw-usr-in)
-        (ecase cmd-type
-          (:quit
-           (quit-cmd)
-           (return conv-hist))          ; Exit loop and return history
-          (:save
-           (save-cmd cmd-data tag) ; cmd-data is the full ":save <filename>" string
-           (continue))             ; Continue to next loop iteration
-          (:prompt
-           (multiple-value-bind (new-total-hist success)
-               (proc-send-prompt cmd-data conv-hist model) ; cmd-data is already the prompt string
-             (if success
-                 (setf conv-hist new-total-hist)
-                 (return conv-hist))))  ; Return history on error
-          (:error ; This case should not be reached with the new proc-usr-prompt-file
-           (format t "~&Skipping turn due to input error.~%")
-           (continue)))))))
+        (multiple-value-bind (cmd-type cmd-data)
+            (read-usr-cmd raw-usr-in)
+          (ecase cmd-type
+            (:quit
+             (quit-cmd)
+             (return conv-hist))          ; Exit loop and return history
+            (:save
+             (save-cmd cmd-data tag) ; cmd-data is the full ":save <filename>" string
+             (continue))             ; Continue to next loop iteration
+            (:input
+             (let* ((file-list-str (string-trim '(#\Space) (subseq cmd-data 6)))
+                    (file-list (s-s file-list-str #\,)))
+               (multiple-value-bind (files-content file-read-status)
+                   (proc-input-files file-list)
+                 (cond
+                   ((eq file-read-status :file-error)
+                    (format t "~&Skipping turn due to file input error.~%")
+                    (continue))
+                   (t
+                    (setf pending-input-content files-content)
+                    (format t "~&File(s) content loaded. It will be sent with your next prompt. Enter your prompt now:~%")
+                    (continue))))))
+            (:prompt
+             (let ((final-prompt-text (if pending-input-content
+                                          (format nil "~a~a" pending-input-content cmd-data)
+                                          cmd-data)))
+               (multiple-value-bind (new-total-hist success)
+                   (proc-send-prompt final-prompt-text conv-hist model)
+                 (if success
+                     (setf conv-hist new-total-hist)
+                     (return conv-hist)))
+               (setf pending-input-content nil))) ; Clear the pending content after use
+            (:error
+             (format t "~&Skipping turn due to input error.~%")
+             (continue))))))))
 
 (defun gem-conv (init-prompt &key (model "gemini-2.5-pro") (tag *d-tag*))
   "Starts and manages a multi-turn conversation with the Gemini API.
@@ -587,9 +592,12 @@ Why?")))
         (format t "~&Error parsing arguments: ~a~%, comand-args: ~s~%" c cmd-args)
         (format t "~&Run with `--help` for usage information.~%")
         (uiop:quit 1)))
+
     (let ((badargs nil))
       (mapc #'(lambda (m)
-                (if (and (> (length m ) 2 ) (string= "--" (subseq m 0 2)))
+                (if (and (> (length m) 2)
+                         (string= "--" (subseq m 0 2))
+                         (string= "-" (subseq m 0 1)))
                     (push m badargs)))
             *remaining-args*)
       (when badargs
@@ -609,25 +617,8 @@ Why?")))
                  (unless success-p
                    (format t "~&Initial prompt generation failed or user quit. Exiting.~%")
                    (return-from run-chat nil))
-                 
+
                  (start-chat f-prompt *tag*)))))))
-
-(defun top ()
-  "Toplevel function for the compiled gemini-chat executable.
-   It retrieves arguments from sb-ext:*posix-argv* and passes them to run-chat."
-  ;; com.google.flag:parse-command-line without :argv defaults to sb-ext:*posix-argv*
-  ;; However, run-chat expects a list of strings, so pass (rest sb-ext:*posix-argv*)
-  (format t "Top: we have command line args of ~%~s~%" sb-ext:*posix-argv*)
-  (run-chat (rest sb-ext:*posix-argv*)))
-
-(defun save-core ()
-  "Saves the current Lisp image as an executable."
-  (format t "Building gemini-chat version ~a~%" (get-version))
-  (sb-ext:save-lisp-and-die "gemini-chat"
-                            :toplevel #'top
-                            :save-runtime-options t
-                            ;; :compression 22
-                            :executable t))
 
 ;; --- SLIME-specific Convenience Functions ---
 
@@ -680,3 +671,27 @@ Why?")))
           (close *run-out-s*)
           (setf *run-out-s* nil))))))
 
+(defun top ()
+  "Toplevel function for the compiled gemini-chat executable.
+   It retrieves arguments from sb-ext:*posix-argv* and passes them to run-chat."
+  ;; com.google.flag:parse-command-line without :argv defaults to sb-ext:*posix-argv*
+  ;; However, run-chat expects a list of strings, so pass (rest sb-ext:*posix-argv*)
+  (format t "Top: we have command line args of ~%~s~%" sb-ext:*posix-argv*)
+  (run-chat (rest sb-ext:*posix-argv*)))
+
+(defun save-core-uncompressed ()
+  "Saves the current Lisp image as an uncompressed executable for faster development."
+  (format t "Building gemini-chat version ~a (uncompressed)~%" (get-version))
+  (sb-ext:save-lisp-and-die "gemini-chat"
+                            :toplevel #'top
+                            :save-runtime-options t
+                            :executable t))
+
+(defun save-core ()
+  "Saves the current Lisp image as an executable."
+  (format t "Building gemini-chat version ~a~%" (get-version))
+  (sb-ext:save-lisp-and-die "gemini-chat"
+                            :toplevel #'top
+                            :save-runtime-options t
+                            :compression 22
+                            :executable t))
