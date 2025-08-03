@@ -286,7 +286,8 @@
              (xlgt :answer-log "~&An unexpected error occurred while reading file ~a: ~a" fpath c)
              nil)))
         (t (xlgt :answer-log "~&No such file as ~a:" fpath)
-           (xlg :thinking-log "~&No such file as ~a:" fpath))))
+           (xlg :thinking-log "~&No such file as ~a:" fpath)
+           nil)))
 
 (defun proc-ctx-files (ctx-files)
   "Reads content from a list of context files and concatenates them.
@@ -298,7 +299,10 @@
         (let ((content (read-file file)))
           (if content
               (format all-content "File: ~a~%```~a```~%~%" file content)
-              (format t "~&Warning: Could not read context file '~a'. Skipping.~%" file))))
+              (progn
+                (format t "~&Error: Could not read context file '~a'. Skipping.~%" file)
+                (error (format nil "~&Error: Could not read context file '~a'. Skipping.~%" file))
+                (return nil)))))
       (format all-content "--- End Context Files --~%~%")
       (get-output-stream-string all-content))))
 
@@ -459,7 +463,9 @@
                  (cond
                    ((eq file-read-status :file-error)
                     (format t "~&Skipping turn due to file input error.~%")
-                    (continue))
+                    (return nil)
+                    #+Nil (return conv-hist)
+                    #+nil (continue))
                    (t
                     (setf pending-input-content files-content)
                     (format t "~&File(s) content loaded. It will be sent with your next prompt. Enter your prompt now:~%")
@@ -475,8 +481,9 @@
                      (return conv-hist)))
                (setf pending-input-content nil))) ; Clear the pending content after use
             (:error
-             (format t "~&Skipping turn due to input error.~%")
-             (continue))))))))
+             (format t "~&Exiting turn due to input error.~%")
+             (return nil)
+             #+nil (continue))))))))
 
 (defun gem-conv (init-prompt &key (model "gemini-2.5-pro") (tag *d-tag*))
   "Starts and manages a multi-turn conversation with the Gemini API.
@@ -608,10 +615,11 @@
         (return-from run-chat)))
     (show-set-options)
 
-    ;; Access flag values directly from their special variables
     (cond (*help-is*
            (print-help))
           (t (let* ((ctx-content (proc-ctx-files *context*)))
+               (if (null ctx-content)
+                   (return-from run-chat nil))
                (when (s/nz *save*)
                  (save-cmd (format nil ":save ~a" *save*) *tag*))
 
