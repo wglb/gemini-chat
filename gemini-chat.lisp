@@ -73,6 +73,12 @@
   :selector "single-shot"
   :default-value nil)
 
+(define-flag *exit-on-error*
+  :help "Exit the program immediately if an input file cannot be read."
+  :type boolean
+  :selector "exit-on-error"
+  :default-value nil)
+
 (defparameter *remaining-args* nil)
 
 (defun s-s (str delim &key (rem-empty nil))
@@ -145,11 +151,27 @@
   (format t "~&gemini-chat version ~a~%~%" (get-version))
   (format t "Usage: ./gemini-chat [options] [initial_prompt]~%~%")
   (format t "Options:~%")
-  (format t "  --help                           Show this help message and exit.~%")
-  (format t "  --context <file1,file2,...>      Specify a comma-separated list of files to be included as initial context.~%")
-  (format t "  --input-files <file1,file2,...>  A comma-separated list of input files whose content will be sent with your prompt.~%")
-  (format t "  --save <file>                    File to save Gemini's responses to (appends).~%")
-  (format t "  --tag <tag>                      A unique tag for conversation logs (default: 'chat').~%~%")
+
+  ;; Dynamically generate the options list from the registered flags.
+  (let ((flags (sort (copy-list com.google.flag::*registered-flags*)
+                     #'string< :key #'car))
+        (max-selector-length 0))
+
+    ;; First pass: find the longest selector string for formatting
+    (dolist (flag-pair flags)
+      (setf max-selector-length (max max-selector-length (length (car flag-pair)))))
+
+    ;; Second pass: print each flag with aligned help text
+    (dolist (flag-pair flags)
+      (let* ((selector (car flag-pair))
+             (flag (cdr flag-pair))
+             (help-text (slot-value flag 'com.google.flag::help))
+             (padding (- max-selector-length (length selector))))
+        (format t "  --~a~a   ~a~%"
+                selector
+                (make-string padding :initial-element #\Space)
+                help-text))))
+  (format t "~%")
   (format t "Interactive Commands (during chat loop):~%")
   (format t "  :input <file1,file2,...>         Add file content to the next prompt.~%")
   (format t "  :save <filename>                 Start or change saving model responses to the specified file.~%")
@@ -279,14 +301,11 @@
              (uiop:read-file-string fpath)
            (file-error (c)
              (xlg :thinking-log "~&Error reading file ~a: ~a" fpath c)
-             (xlgt :answer-log "~&Error reading file ~a: ~a" fpath c)
              nil)
            (error (c)
              (xlg :thinking-log "~&An unexpected error occurred while reading file ~a: ~a" fpath c)
-             (xlgt :answer-log "~&An unexpected error occurred while reading file ~a: ~a" fpath c)
              nil)))
-        (t (xlgt :answer-log "~&No such file as ~a:" fpath)
-           (xlg :thinking-log "~&No such file as ~a:" fpath)
+        (t (xlg :thinking-log "~&No such file as ~a:" fpath)
            nil)))
 
 (defun proc-ctx-files (ctx-files)
@@ -299,10 +318,7 @@
         (let ((content (read-file file)))
           (if content
               (format all-content "File: ~a~%```~a```~%~%" file content)
-              (progn
-                (format t "~&Error: Could not read context file '~a'. Skipping.~%" file)
-                (error (format nil "~&Error: Could not read context file '~a'. Skipping.~%" file))
-                (return nil)))))
+              (format t "~&Warning: Could not read context file '~a'. Skipping.~%" file))))
       (format all-content "--- End Context Files --~%~%")
       (get-output-stream-string all-content))))
 
@@ -328,7 +344,7 @@
               (setf *run-out-s* (open fpath :direction :output :if-exists if-exists :if-does-not-exist :create))
               (format t "~&Saving conversation answers to: ~a (if-exists: ~a)~%" fpath if-exists)
               (xlgt :answer-log "~&Saving conversation answers to: ~a (if-exists: ~a)~%" fpath if-exists)
-              #+nil (format *run-out-s* "~&--- Runtime Conversation Answers Log Started (~a) ---~%~%" tag))
+              (format *run-out-s* "~&--- Runtime Conversation Answers Log Started (~a) ---~%~%" tag))
           (file-error (c)
             (format t "~&Error opening file for saving: ~a~%" c)
             (xlgt :answer-log "~&Error opening file for saving: ~a~%" c)
@@ -360,6 +376,8 @@
               (progn
                 (format t "~&Error: Could not read input file '~a'. Aborting prompt.~%" file)
                 (flush-all-log-streams)
+                (when *exit-on-error*
+                  (uiop:quit 1))
                 (return-from proc-input-files (values nil :file-error))))))
       (get-output-stream-string all-content))))
 
@@ -442,7 +460,6 @@
     (loop
       (xlgt :answer-log "~&~%Enter your next prompt (or type 'quit' to end, ':save <filename>' to save output, ':input <filename>' to add a file):")
       (let ((raw-usr-in (read-line)))
-
         (multiple-value-bind (cmd-type cmd-data)
             (read-usr-cmd raw-usr-in)
           (ecase cmd-type
@@ -460,9 +477,7 @@
                  (cond
                    ((eq file-read-status :file-error)
                     (format t "~&Skipping turn due to file input error.~%")
-                    (return nil)
-                    #+Nil (return conv-hist)
-                    #+nil (continue))
+                    (continue))
                    (t
                     (setf pending-input-content files-content)
                     (format t "~&File(s) content loaded. It will be sent with your next prompt. Enter your prompt now:~%")
@@ -478,9 +493,8 @@
                      (return conv-hist)))
                (setf pending-input-content nil))) ; Clear the pending content after use
             (:error
-             (format t "~&Exiting turn due to input error.~%")
-             (return nil)
-             #+nil (continue))))))))
+             (format t "~&Skipping turn due to input error.~%")
+             (continue))))))))
 
 (defun gem-conv (init-prompt &key (model "gemini-2.5-pro") (tag *d-tag*))
   "Starts and manages a multi-turn conversation with the Gemini API.
@@ -535,10 +549,11 @@
          (files-content nil))
 
     (when actual-input-files
-      (multiple-value-setq (files-content)
-        (proc-input-files actual-input-files))
-      (unless files-content
-        (return-from initial-prompt (values nil nil)))) ; Error reading file
+      (multiple-value-bind (content file-read-status)
+          (proc-input-files actual-input-files)
+        (when (eq file-read-status :file-error)
+          (return-from initial-prompt (values nil nil)))
+        (setf files-content content)))
 
     (cond
       ;; Case 1: No initial prompt via CLI/args and no input files, prompt interactively
@@ -573,6 +588,7 @@
   (xlgt :answer-log "tag ~s" *tag*)
   (xlgt :answer-log "input_files ~s" *input-files*)
   (xlgt :answer-log "help ~s" *help-is*)
+  (xlgt :answer-log "exit-on-error ~s" *exit-on-error*)
   (xlgt :answer-log "remaining options ~s" *remaining-args*))
 
 ;; New function for setting log file base name
@@ -609,14 +625,13 @@
             *remaining-args*)
       (when badargs
         (xlgt :answer-log "Error--Unprocessed options: ~s, exiting." (reverse badargs))
-        (return-from run-chat)))
+        (uiop:quit 1)))
     (show-set-options)
 
+    ;; Access flag values directly from their special variables
     (cond (*help-is*
            (print-help))
           (t (let* ((ctx-content (proc-ctx-files *context*)))
-               (if (null ctx-content)
-                   (return-from run-chat nil))
                (when (s/nz *save*)
                  (save-cmd (format nil ":save ~a" *save*) *tag*))
 
@@ -624,6 +639,9 @@
                    (initial-prompt ctx-content)
                  (unless success-p
                    (format t "~&Initial prompt generation failed or user quit. Exiting.~%")
+                   ;; This is the new fix. If the prompt fails to generate and the flag is set, quit.
+                   (when *exit-on-error*
+                     (uiop:quit 1))
                    (return-from run-chat nil))
 
                  (start-chat f-prompt *tag*)))))))
