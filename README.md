@@ -158,7 +158,7 @@ To illustrate a complex usage scenario: using an input file, multiple context fi
 
 Bash
 
-./gemini-chat -c your_context_file.txt,:~/another_context.md :save my_output.txt /path/to/your_input_file.txt "Please summarize the content of the attached file and then answer my questions."
+./gemini-chat --context your_context_file.txt,:~/another_context.md :save my_output.txt /path/to/your_input_file.txt "Please summarize the content of the attached file and then answer my questions."
 Let's break down the components of that command:
 
 ./gemini-chat: This is how you'd typically execute the compiled program.
@@ -192,7 +192,7 @@ You run the command:
 
 Bash
 
-./gemini-chat -c my_project_docs.txt,another_doc.txt :save session_log.txt /home/<your home directory>/data/quarterly_report.csv
+./gemini-chat --context=my_project_docs.txt,another_doc.txt :save session_log.txt /home/<your home directory>/data/quarterly_report.csv
 gemini-chat processes my_project_docs.txt and another_doc.txt as context.
 
 It sets up session_log.txt to save the output.
