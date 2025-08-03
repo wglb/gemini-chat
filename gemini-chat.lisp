@@ -321,10 +321,7 @@
               (multiple-value-bind (pathspec creat)
                   (ensure-directories-exist fpath :verbose t)
                 (xlgt :thinking-log "directory ~s created ~s" pathspec creat))
-              (setf *run-out-s* (open (if tag
-                                          (format nil "~a-~a" fpath tag)
-                                          fpath)
-                                      :direction :output :if-exists if-exists :if-does-not-exist :create))
+              (setf *run-out-s* (open fpath :direction :output :if-exists if-exists :if-does-not-exist :create))
               (format t "~&Saving conversation answers to: ~a (if-exists: ~a)~%" fpath if-exists)
               (xlgt :answer-log "~&Saving conversation answers to: ~a (if-exists: ~a)~%" fpath if-exists)
               #+nil (format *run-out-s* "~&--- Runtime Conversation Answers Log Started (~a) ---~%~%" tag))
