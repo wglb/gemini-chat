@@ -377,7 +377,7 @@
                 (format t "~&Error: Could not read input file '~a'. Aborting prompt.~%" file)
                 (flush-all-log-streams)
                 (when *exit-on-error*
-                  (uiop:quit 1))
+				  (error (format nil "Input file ~s missing" file)))
                 (return-from proc-input-files (values nil :file-error))))))
       (get-output-stream-string all-content))))
 
@@ -606,16 +606,15 @@
            (if (and (consp raw-args) (listp (car raw-args)))
                (car raw-args)
                raw-args)))
-
     (format t "~&gemini-chat version ~a~%" ver)
 
     (handler-case
-        (setf *remaining-args* (parse-command-line cmd-args))
+        (progn
+		  (setf *remaining-args* (parse-command-line cmd-args)))
+	  
       (error (c)
         (format t "~&Error parsing arguments: ~a~%, comand-args: ~s~%" c cmd-args)
-        (format t "~&Run with `--help` for usage information.~%")
-        (uiop:quit 1)))
-
+        (format t "~&Run with `--help` for usage information.~%")))
     (let ((badargs nil))
       (mapc #'(lambda (m)
                 (if (and (> (length m) 2)
@@ -623,28 +622,27 @@
                          (string= "-" (subseq m 0 1)))
                     (push m badargs)))
             *remaining-args*)
-      (when badargs
-        (xlgt :answer-log "Error--Unprocessed options: ~s, exiting." (reverse badargs))
-        (uiop:quit 1)))
-    (show-set-options)
+	  (show-set-options)
+      ;; Access flag values directly from their special variables
+      (cond (badargs
+			 (xlgt :answer-log "Error--Unprocessed options: ~s, exiting." (reverse badargs)))
+			(*help-is*
+			 (print-help))
+			(t (let* ((ctx-content (proc-ctx-files *context*)))
+				 (when (s/nz *save*)
+                   (save-cmd (format nil ":save ~a" *save*) *tag*))
 
-    ;; Access flag values directly from their special variables
-    (cond (*help-is*
-           (print-help))
-          (t (let* ((ctx-content (proc-ctx-files *context*)))
-               (when (s/nz *save*)
-                 (save-cmd (format nil ":save ~a" *save*) *tag*))
+				 (multiple-value-bind (f-prompt success-p)
+					 (initial-prompt ctx-content)
+                   (unless success-p
+					 (format t "~&Initial prompt generation failed or user quit. Exiting.~%")
+					 ;; This is the new fix. If the prompt fails to generate and the flag is set, quit.
+					 (when *exit-on-error*
+                       (error (format nil "~&Initial prompt generation failed or user quit. Exiting.~%")))
+					 (return-from run-chat nil))
 
-               (multiple-value-bind (f-prompt success-p)
-                   (initial-prompt ctx-content)
-                 (unless success-p
-                   (format t "~&Initial prompt generation failed or user quit. Exiting.~%")
-                   ;; This is the new fix. If the prompt fails to generate and the flag is set, quit.
-                   (when *exit-on-error*
-                     (uiop:quit 1))
-                   (return-from run-chat nil))
+                   (start-chat f-prompt *tag*))))))))
 
-                 (start-chat f-prompt *tag*)))))))
 
 ;; --- SLIME-specific Convenience Functions ---
 
