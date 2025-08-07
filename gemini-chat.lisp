@@ -23,17 +23,15 @@
 (defun get-version ()
   (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
 
-(defun get-key ()
-  "Retrieves the Gemini API key from the GEMINI_API_KEY environment variable.
-   Signals an error if the environment variable is not set.
-   It first tries GEMINI_API_KEY, then falls back to _GEMINI_API_KEY_."
-  (let ((key (getenv "GEMINI_API_KEY")))
-    (unless key
-      (error "Error: The GEMINI_API_KEY environment variable is not set.
-              Please set this before running this program."))
-    key))
+
 
 ;; --- Define Flags using com.google.flag ---
+
+(define-flag *keyname*
+  :help "Name of google key to retrieve"
+  :type keyword
+  :selector "key"
+  :default-value :personal)
 
 (define-flag *context*
   :help "Path to a context file. Can be specified multiple times. Example: --context file1.txt,file2.txt"
@@ -79,7 +77,27 @@
   :selector "exit-on-error"
   :default-value nil)
 
+(defun get-key (&optional (key-name *keyname*))
+  "Retrieves the Gemini API key from ~/.key/keys.lsp. If not found, 
+   we use the GEMINI_API_KEY environment variable.
+   Signals an error if the environment variable is not set.
+   It first tries GEMINI_API_KEY, then falls back to _GEMINI_API_KEY_."
+  (let* ((fn "~/.gemini/keys.lsp")
+         (keys (if (probe-file fn)
+                   (second (assoc key-name (uiop:read-file-form fn)))
+                   nil)))
+    (let ((key (if keys
+                   keys
+                   (getenv "GEMINI_API_KEY"))))
+      (unless key
+        (error "Error: The GEMINI_API_KEY environment variable is not set.
+              Please set this before running this program."))
+      key)))
+
+
+
 (defparameter *remaining-args* nil)
+
 
 (defun s-s (str delim &key (rem-empty nil))
   "Encapsulates calls to split-sequence. Splits a string by a single character delimiter.
