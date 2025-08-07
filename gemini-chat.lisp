@@ -23,12 +23,10 @@
 (defun get-version ()
   (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
 
-
-
 ;; --- Define Flags using com.google.flag ---
 
 (define-flag *keyname*
-  :help "Name of google key to retrieve"
+  :help "Name of gemini api key to retrieve"
   :type keyword
   :selector "key"
   :default-value :personal)
@@ -94,10 +92,7 @@
               Please set this before running this program."))
       key)))
 
-
-
 (defparameter *remaining-args* nil)
-
 
 (defun s-s (str delim &key (rem-empty nil))
   "Encapsulates calls to split-sequence. Splits a string by a single character delimiter.
