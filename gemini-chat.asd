@@ -3,7 +3,7 @@
   :description "Lisp-based gemini chat"
   :author "wgl@ciex-security.com"
   :license  "GPLv3"
-  :version "1.4.1"
+  :version "1.4.2"
   :serial t
   :depends-on (#:drakma
                #:jsown

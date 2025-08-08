@@ -254,7 +254,7 @@
    'msgs' should be a list of Lisp :OBJ structures, each representing a conversation turn.
    'model' specifies the Gemini model to use (e.g., \"gemini-2.5-pro\", \"gemini-1.5-flash\").
    Returns the response stream if successful."
-  (let* ((api-key (get-key))
+  (let* ((api-key (get-key *keyname*))
          (api-url (format nil "https://generativelanguage.googleapis.com/v1beta/models/~a:generateContent?key=~a"
                           model api-key))
          (json-payload-lisp-object (jsown:new-js ("contents" msgs)))
@@ -627,8 +627,7 @@
       (error (c)
         (format t "~&Error parsing arguments: ~a~%, comand-args: ~s~%" c cmd-args)
         (format t "~&Run with `--help` for usage information.~%")
-        (uiop:quit 1)))
-
+        (error (format nil "~&Error parsing arguments: ~a~%, comand-args: ~s~%" c cmd-args))))
     (let ((badargs nil))
       (mapc #'(lambda (m)
                 (if (and (> (length m) 2)
