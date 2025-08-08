@@ -32,6 +32,12 @@
     export GEMINI_API_KEY="YOUR_API_KEY_HERE"
     ```
     Replace `YOUR_API_KEY_HERE` with your actual key. You might want to add this line to your shell's profile file (e.g., `.bashrc`, `.zshrc`, `config.fish`) for persistence.
+	
+	You can also put your keys in ~/.gemini/keys.lsp in the format of
+	    ((:key1 "the first key")
+		 (:key2 "the second key")
+		 
+    And specify the name of the key in the "--key=key1" command line option.
 
 ### Building and Running
 
