@@ -23,17 +23,13 @@
 (defun get-version ()
   (slot-value (asdf:find-system 'gemini-chat) 'asdf:version))
 
-(defun get-key ()
-  "Retrieves the Gemini API key from the GEMINI_API_KEY environment variable.
-   Signals an error if the environment variable is not set.
-   It first tries GEMINI_API_KEY, then falls back to _GEMINI_API_KEY_."
-  (let ((key (getenv "GEMINI_API_KEY")))
-    (unless key
-      (error "Error: The GEMINI_API_KEY environment variable is not set.
-              Please set this before running this program."))
-    key))
-
 ;; --- Define Flags using com.google.flag ---
+
+(define-flag *keyname*
+  :help "Name of gemini api key to retrieve"
+  :type keyword
+  :selector "key"
+  :default-value :personal)
 
 (define-flag *context*
   :help "Path to a context file. Can be specified multiple times. Example: --context file1.txt,file2.txt"
@@ -78,6 +74,23 @@
   :type boolean
   :selector "exit-on-error"
   :default-value nil)
+
+(defun get-key (&optional (key-name *keyname*))
+  "Retrieves the Gemini API key from ~/.key/keys.lsp. If not found, 
+   we use the GEMINI_API_KEY environment variable.
+   Signals an error if the environment variable is not set.
+   It first tries GEMINI_API_KEY, then falls back to _GEMINI_API_KEY_."
+  (let* ((fn "~/.gemini/keys.lsp")
+         (keys (if (probe-file fn)
+                   (second (assoc key-name (uiop:read-file-form fn)))
+                   nil)))
+    (let ((key (if keys
+                   keys
+                   (getenv "GEMINI_API_KEY"))))
+      (unless key
+        (error "Error: The GEMINI_API_KEY environment variable is not set.
+              Please set this before running this program."))
+      key)))
 
 (defparameter *remaining-args* nil)
 
@@ -241,7 +254,7 @@
    'msgs' should be a list of Lisp :OBJ structures, each representing a conversation turn.
    'model' specifies the Gemini model to use (e.g., \"gemini-2.5-pro\", \"gemini-1.5-flash\").
    Returns the response stream if successful."
-  (let* ((api-key (get-key))
+  (let* ((api-key (get-key *keyname*))
          (api-url (format nil "https://generativelanguage.googleapis.com/v1beta/models/~a:generateContent?key=~a"
                           model api-key))
          (json-payload-lisp-object (jsown:new-js ("contents" msgs)))
@@ -609,12 +622,11 @@
     (format t "~&gemini-chat version ~a~%" ver)
 
     (handler-case
-        (progn
-		  (setf *remaining-args* (parse-command-line cmd-args)))
-	  
+        (setf *remaining-args* (parse-command-line cmd-args))
       (error (c)
         (format t "~&Error parsing arguments: ~a~%, comand-args: ~s~%" c cmd-args)
-        (format t "~&Run with `--help` for usage information.~%")))
+        (format t "~&Run with `--help` for usage information.~%")
+        (error (format nil "~&Error parsing arguments: ~a~%, comand-args: ~s~%" c cmd-args))))
     (let ((badargs nil))
       (mapc #'(lambda (m)
                 (if (and (> (length m) 2)
