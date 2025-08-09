@@ -1,0 +1,1 @@
+For each file, start counting line 1 at the line immediately following the `===BEGIN_FILE...===` marker.
