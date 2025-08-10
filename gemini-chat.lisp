@@ -27,9 +27,9 @@
 
 (define-flag *keyname*
   :help "Name of gemini api key to retrieve"
-  :type keyword
+  :type string
   :selector "key"
-  :default-value :personal)
+  :default-value "personal")
 
 (define-flag *context*
   :help "Path to a context file. Can be specified multiple times. Example: --context file1.txt,file2.txt"
@@ -82,11 +82,17 @@
    It first tries GEMINI_API_KEY, then falls back to _GEMINI_API_KEY_."
   (let* ((fn "~/.gemini/keys.lsp")
          (keys (if (probe-file fn)
-                   (second (assoc key-name (uiop:read-file-form fn)))
+                   (uiop:read-file-form fn)
                    nil)))
-    (let ((key (if keys
-                   keys
-                   (getenv "GEMINI_API_KEY"))))
+    (let* ((keyv (cond ((eq (type-of *keyname*) :keyword)
+						*keyname*)
+					   (t (intern (string-upcase key-name) :keyword))))
+		   
+		   (key (cond (keys
+					   (second (assoc keyv keys)))
+					  (t (format t "getting key from environment ~%")
+						 (break "why")
+						 (getenv "GEMINI_API_KEY")))))
       (unless key
         (error "Error: The GEMINI_API_KEY environment variable is not set.
               Please set this before running this program."))
@@ -281,7 +287,7 @@
   (handler-case
       (let* ((json-string (uiop:slurp-stream-string resp-stream))
              (pjs (jsown:parse json-string)))
-        (xlg :thinking-log "~&Raw JSON string received: ~a" pjs)
+        (xlg :thinking-log "~&Raw JSON string received:~% ~a" pjs)
         pjs)
     (error (c)
       (error "Failed to parse JSON response: ~a" c))))
