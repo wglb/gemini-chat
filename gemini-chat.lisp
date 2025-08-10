@@ -91,7 +91,6 @@
 		   (key (cond (keys
 					   (second (assoc keyv keys)))
 					  (t (format t "getting key from environment ~%")
-						 (break "why")
 						 (getenv "GEMINI_API_KEY")))))
       (unless key
         (error "Error: The GEMINI_API_KEY environment variable is not set.
