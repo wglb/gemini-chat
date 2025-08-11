@@ -1,0 +1,18 @@
+The defensive coding we added to extract-txt ensures that your program doesn't crash when it
+receives an incomplete response. Instead of halting, the function now gracefully returns nil. This
+gives you the perfect opportunity to implement a simple retry mechanism in the code that calls
+extract-txt.
+
+A good strategy would be to:
+
+Call the gemini-conversation function (or whichever function makes the API call).
+
+If extract-txt returns nil, log the event.
+
+Wait for a short period of time (e.g., 2-5 seconds) to avoid overwhelming the server.
+
+Retry the same query.
+
+You could wrap this logic in a loop that tries a few times before giving up and reporting a more
+critical error to the user. This makes your program much more resilient to temporary API quirks or
+unexpected responses.
