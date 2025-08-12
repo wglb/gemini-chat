@@ -431,7 +431,7 @@
         (flush-all-log-streams)
         (values (append conv-hist (list u-turn m-turn)) t))
       (progn
-        (xlgt :answer-log "~&Error on ~a: ~a: ~a" turn-type
+        (xlgt :answer-log "~&Error on ~a:~%[~a]: ~a" turn-type
               parsed-json "No text generated or unexpected response structure.")
         (when *run-out-s* ; Log API errors that prevent text generation, as they are part of the answer stream
           (format *run-out-s* "~&Error on ~a: [~a] ~a~%" turn-type
