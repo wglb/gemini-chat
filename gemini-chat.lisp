@@ -291,27 +291,6 @@
     (error (c)
       (error "Failed to parse JSON response: ~a" c))))
 
-(defun extract-txt-wrong? (parsed-json)
-  "Extracts the generated text from the parsed Gemini API JSON response using jsown accessors.
-   Returns the text string or NIL if not found."
-  (cond ((jsown:keyp parsed-json "error")
-         (progn
-           (xlg :thinking-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
-           (xlgt :answer-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
-           nil))
-        ((jsown:keyp parsed-json "candidates")
-         (let* ((candidates (jsown:val parsed-json "candidates"))
-                (first-candidate (car candidates)))
-           (when first-candidate
-             (let* ((content (jsown:val first-candidate "content")))
-               (when (and content (jsown:keyp content "parts"))
-                 (let* ((parts (jsown:val content "parts"))
-                        (first-part (car parts)))
-                   (when (and first-part (jsown:keyp first-part "text"))
-                     (jsown:val first-part "text"))))))))
-        (t (xlgt :answer-log "No parsed json available: ~a" parsed-json)
-           "No parsed json available. Why?")))
-
 (defun extract-txt (parsed-json)
   "Extracts the generated text from the parsed Gemini API JSON response using jsown accessors.
    Returns the text string or NIL if not found."
