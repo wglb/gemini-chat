@@ -455,8 +455,8 @@
         (xlgt :answer-log "~&Error on ~a: ~a: ~a" turn-type
               parsed-json "No text generated or unexpected response structure.")
         (when *run-out-s* ; Log API errors that prevent text generation, as they are part of the answer stream
-          (format *run-out-s* "~&Error on ~a: ~a~%" turn-type
-                  (or (jsown:val (jsown:val parsed-json "error") "message") "No text generated or unexpected response structure."))
+          (format *run-out-s* "~&Error on ~a: [~a] ~a~%" turn-type
+                  parsed-json "No text generated or unexpected response structure.")
           (finish-output *run-out-s*))
         (xlg :thinking-log "Parsed JSON for ~a: ~s" turn-type parsed-json)
         (flush-all-log-streams)
