@@ -443,7 +443,7 @@
    or (values nil nil) on error, signaling the need for the caller to stop."
   (if model-resp-txt
       (progn
-        (xlgt :answer-log "~&Gemini: ~a" model-resp-txt)
+        (xlg :answer-log "~&Gemini: ~a" model-resp-txt :timestamp t)
         (when *run-out-s*
           (format *run-out-s* "~&~a~%" model-resp-txt)
           (finish-output *run-out-s*)) ; Ensure content is written immediately
@@ -452,8 +452,8 @@
         (flush-all-log-streams)
         (values (append conv-hist (list u-turn m-turn)) t))
       (progn
-        (xlgt :answer-log "~&Error on ~a: ~a" turn-type
-              (or (jsown:val (jsown:val parsed-json "error") "message") "No text generated or unexpected response structure."))
+        (xlgt :answer-log "~&Error on ~a: ~a: ~a" turn-type
+              parsed-json "No text generated or unexpected response structure.")
         (when *run-out-s* ; Log API errors that prevent text generation, as they are part of the answer stream
           (format *run-out-s* "~&Error on ~a: ~a~%" turn-type
                   (or (jsown:val (jsown:val parsed-json "error") "message") "No text generated or unexpected response structure."))
