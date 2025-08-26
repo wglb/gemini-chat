@@ -76,22 +76,21 @@
   :default-value nil)
 
 (defun get-key (&optional (key-name *keyname*))
-  "Retrieves the Gemini API key from ~/.key/keys.lsp. If not found, 
+  "Retrieves the Gemini API key from ~/.key/keys.lsp. If not found,
    we use the GEMINI_API_KEY environment variable.
    Signals an error if the environment variable is not set.
-   It first tries GEMINI_API_KEY, then falls back to _GEMINI_API_KEY_."
+   It first tries GEMINI_API-KEY, then falls back to _GEMINI_API-KEY_."
   (let* ((fn "~/.gemini/keys.lsp")
          (keys (if (probe-file fn)
                    (uiop:read-file-form fn)
                    nil)))
     (let* ((keyv (cond ((eq (type-of *keyname*) :keyword)
-						*keyname*)
-					   (t (intern (string-upcase key-name) :keyword))))
-		   
-		   (key (cond (keys
-					   (second (assoc keyv keys)))
-					  (t (format t "getting key from environment ~%")
-						 (getenv "GEMINI_API_KEY")))))
+                        *keyname*)
+                       (t (intern (string-upcase key-name) :keyword))))
+           (key (cond (keys
+                       (second (assoc keyv keys)))
+                      (t (format t "getting key from environment ~%")
+                         (getenv "GEMINI_API_KEY")))))
       (unless key
         (error "Error: The GEMINI_API_KEY environment variable is not set.
               Please set this before running this program."))
@@ -110,59 +109,28 @@
 (defun s/nz (str)
   (plusp (length str)))
 
-(defun wrap-par (paragraph-text indent-str column-width stream)
-  "Wraps a single paragraph to column-width, writing to stream.
-   Indents subsequent lines with indent-str.
-   Assumes paragraph-text is already trimmed of leading/trailing spaces for itself."
-  (let ((indent-len (length indent-str))
-        (line-pos 0)
-        (words (s-s (string-trim '(#\Space #\Tab) paragraph-text) #\Space :rem-empty t)))
+;; --- Primitives for Help Formatting ---
 
-    (unless (null words) ; Only process if there are words
-      (format stream "~a" indent-str)
-      (setf line-pos indent-len)
+(defun get-sorted-flags ()
+  "Retrieves and sorts the registered flags alphabetically by their selector string."
+  (sort (copy-list com.google.flag::*registered-flags*)
+        #'string< :key #'car))
 
-      (loop for word in words
-            for first-word-on-line-p = t then nil
-            do (let ((word-len (length word)))
-                 (cond
-                   ;; If adding the word will exceed the column width, start a new line
-                   ((> (+ line-pos (if first-word-on-line-p 0 1) word-len) column-width)
-                    (format stream "~%~a~a" indent-str word)
-                    (setf line-pos (+ indent-len word-len))
-                    (setf first-word-on-line-p nil))
-                   ;; Otherwise, add it to the current line
-                   (t
-                    (unless first-word-on-line-p
-                      (format stream " "))
-                    (format stream "~a" word)
-                    (incf line-pos (+ word-len (if first-word-on-line-p 0 1)))
-                    (setf first-word-on-line-p nil))))))))
+(defun find-max-selector-length (flags)
+  "Finds the maximum length of the flag selector strings for alignment."
+  (let ((max-length 0))
+    (dolist (flag-pair flags)
+      (setf max-length (max max-length (length (car flag-pair)))))
+    max-length))
 
-(defun wrap-and-indent (text indent-str &optional (column-width *help-column-width*))
-  "Wraps the given text to column-width, indenting subsequent lines with indent-str.
-   Initial lines of paragraphs also start with indent-str.
-   Existing newlines in 'text' are treated as paragraph breaks.
-   Correctly handles leading/trailing whitespace and empty input."
-  (let* ((output (with-output-to-string (s)
-                   (loop for paragraph in (s-s text #\Newline :rem-empty nil)
-                         for first-paragraph-p = t then nil
-                         do (cond
-                              ;; If it's an empty line (explicit newline in input), output a blank line
-                              ((string= paragraph "")
-                               (unless first-paragraph-p (format s "~%"))
-                               (format s "~%"))
-                              ;; Process non-empty paragraph
-                              (t
-                               (unless first-paragraph-p (format s "~%"))
-                               (wrap-par (string-trim '(#\Space #\Tab) paragraph)
-                                         indent-str
-                                         column-width
-                                         s)))))))
-    ;; Remove any trailing newline if it's the only character or if it's not desired at the very end
-    (if (and (plusp (length output)) (char= (char output (1- (length output))) #\Newline))
-        (subseq output 0 (1- (length output)))
-        output)))
+(defun print-flag-help (selector flag max-selector-length)
+  "Prints the help message for a single flag with proper padding using ~vt."
+  (let* ((help-text (slot-value flag 'com.google.flag::help))
+         (padding (+ max-selector-length 5))) ; 5 spaces to separate --selector and help text
+    (format t "  --~a~vt~a~%"
+            selector
+            padding
+            help-text)))
 
 (defun print-help ()
   "Prints the command-line help message and example usage."
@@ -170,54 +138,39 @@
   (format t "Usage: ./gemini-chat [options] [initial_prompt]~%~%")
   (format t "Options:~%")
 
-  ;; Dynamically generate the options list from the registered flags.
-  (let ((flags (sort (copy-list com.google.flag::*registered-flags*)
-                     #'string< :key #'car))
-        (max-selector-length 0))
-
-    ;; First pass: find the longest selector string for formatting
+  (let* ((flags (get-sorted-flags))
+         (max-selector-length (find-max-selector-length flags)))
     (dolist (flag-pair flags)
-      (setf max-selector-length (max max-selector-length (length (car flag-pair)))))
+      (print-flag-help (car flag-pair) (cdr flag-pair) max-selector-length)))
 
-    ;; Second pass: print each flag with aligned help text
-    (dolist (flag-pair flags)
-      (let* ((selector (car flag-pair))
-             (flag (cdr flag-pair))
-             (help-text (slot-value flag 'com.google.flag::help))
-             (padding (- max-selector-length (length selector))))
-        (format t "  --~a~a   ~a~%"
-                selector
-                (make-string padding :initial-element #\Space)
-                help-text))))
   (format t "~%")
   (format t "Interactive Commands (during chat loop):~%")
   (format t "  :input <file1,file2,...>         Add file content to the next prompt.~%")
   (format t "  :save <filename>                 Start or change saving model responses to the specified file.~%")
   (format t "  quit                             End the conversation.~%~%")
   (format t "Initial Prompt:~%")
-  (format t "~a~%" (wrap-and-indent "If no initial prompt or input files are given, the program will prompt you interactively." "  "))
-  (format t "~a~%~%" (wrap-and-indent "Otherwise, all non-option arguments are treated as the initial prompt text." "  "))
-
-  (format t "---~%~%")
+  (format t "~@<  If no initial prompt or input files are given, the program will prompt you interactively.~:>" *help-column-width*)
+  (format t "~@<  Otherwise, all non-option arguments are treated as the initial prompt text.~:>" *help-column-width*)
+  (format t "~%---~%~%")
   (format t "## Example Flow:~%~%")
-  (format t "~a~%" (wrap-and-indent "To use the `gemini-chat` program with input files, a context file, a defined output file, and a prompt that references the input files, you'd use a command like this:" ""))
-  (format t "```bash~%")
+  (format t "~@<To use the `gemini-chat` program with input files, a context file, a defined output file, and a prompt that references the input files, you'd use a command like this:~:>" *help-column-width*)
+  (format t "~%```bash~%")
   (format t "./gemini-chat --context your_context.md --input-files code.lisp,tests.lisp --save session.log \"Based on the attached Lisp code and its tests, please suggest improvements.\"~%")
   (format t "```~%~%")
-  (format t "~a~%~%" (wrap-and-indent "Let's break down the components of that command:" ""))
-  (format t "* **`./gemini-chat`**: ~a~%~%" (wrap-and-indent "This is how you'd typically execute the compiled program." "    "))
-  (format t "* **`--context your_context.md`**:~%")
-  (format t "~a~%~%" (wrap-and-indent "`--context` specifies a **context file**. Its content is provided to the model for background information that should influence the response, but isn't the primary subject of your query." "    "))
-  (format t "* **`--input-files code.lisp,tests.lisp`**:~%")
-  (format t "~a~%~%" (wrap-and-indent "`--input-files` specifies one or more **input files**. The content of these files is included directly in your prompt, enclosed in markers. This is for content you want the model to directly analyze, modify, or reference." "    "))
-  (format t "* **`--save session.log`**:~%")
-  (format t "~a~%~%" (wrap-and-indent "This flag tells `gemini-chat` to append all of the model's responses to the file `session.log`." "    "))
-  (format t "* **`\"Based on the attached Lisp code...\"`**:~%")
-  (format t "~a~%~%" (wrap-and-indent "This is the **initial prompt**. It's the main instruction or question for the model. All non-option arguments are combined to form this prompt." "    "))
-  (format t "---~%~%")
+  (format t "~@<Let's break down the components of that command:~:>" *help-column-width*)
+  (format t "~%* **`./gemini-chat`**: ~@<This is how you'd typically execute the compiled program.~:>" *help-column-width*)
+  (format t "~%* **`--context your_context.md`**:~%")
+  (format t "~@<  This flag specifies a **context file**. Its content is provided to the model for background information that should influence the response, but isn't the primary subject of your query.~:>" *help-column-width*)
+  (format t "~%* **`--input-files code.lisp,tests.lisp`**:~%")
+  (format t "~@<  This flag specifies one or more **input files**. The content of these files is included directly in your prompt, enclosed in markers. This is for content you want the model to directly analyze, modify, or reference.~:>" *help-column-width*)
+  (format t "~%* **`--save session.log`**:~%")
+  (format t "~@<  This flag tells `gemini-chat` to append all of the model's responses to the file `session.log`.~:>" *help-column-width*)
+  (format t "~%* **`\"Based on the attached Lisp code...\"`**:~%")
+  (format t "~@<  This is the **initial prompt**. It's the main instruction or question for the model. All non-option arguments are combined to form this prompt.~:>" *help-column-width*)
+  (format t "~%---~%~%")
   (format t "### How the prompt is built:~%~%")
-  (format t "Internally, `gemini-chat` assembles these pieces into a single large prompt to send to the Gemini API. For the example above, the structure would look like this:~%~%")
-  (format t "```~%")
+  (format t "~@<Internally, `gemini-chat` assembles these pieces into a single large prompt to send to the Gemini API. For the example above, the structure would look like this:~:>" *help-column-width*)
+  (format t "~%```~%")
   (format t "--- Context Files --~%")
   (format t "File: your_context.md~%")
   (format t "```... content of your_context.md ...```~%")
@@ -232,27 +185,32 @@
   (format t "... content of tests.lisp ...~%")
   (format t "===END_FILE: [tests.lisp]===~%")
   (format t "~%")
-  (format t "My prompt: Based on the attached Lisp code and its tests, please suggest improvements.~%")
-  (format t "```~%~%")
-  (format t "This entire block of text is what gets sent to the model for the first turn of the conversation.~%~%")
+  (format t "~@<My prompt: Based on the attached Lisp code and its tests, please suggest improvements.~:>" *help-column-width*)
+  (format t "~%```~%~%")
+  (format t "~@<This entire block of text is what gets sent to the model for the first turn of the conversation.~:>" *help-column-width*)
   (finish-output))
 
-;; --- JSOWN-specific data structure creation ---
 
-(defun msg-part (text)
+;; --- Primitives for JSOWN-specific data structure creation ---
+
+(defun make-text-part (text)
   "Creates a Lisp :OBJ representing a 'part' in the Gemini API JSON structure."
   (jsown:new-js ("text" text)))
 
-(defun msg-content (parts)
+(defun make-content-object (parts)
   "Creates a Lisp :OBJ representing 'content' in the Gemini API JSON structure."
   (jsown:new-js ("parts" parts)))
 
-(defun msg-turn (role text)
+(defun make-message-turn (role content-parts)
   "Creates a Lisp :OBJ representing a single 'turn' (message) in the Gemini API JSON structure.
    This will be encoded by JSOWN as a JSON object."
   (jsown:new-js
     ("role" role)
-    ("parts" (list (msg-part text)))))
+    ("parts" content-parts)))
+
+(defun make-api-request-payload (msgs)
+  "Constructs the full JSON payload object for the Gemini API."
+  (jsown:new-js ("contents" msgs)))
 
 (defun api-req (msgs &key (model "gemini-2.5-pro"))
   "Constructs and sends an HTTP POST request to the Gemini API.
@@ -260,21 +218,13 @@
    'model' specifies the Gemini model to use (e.g., \"gemini-2.5-pro\", \"gemini-1.5-flash\").
    Returns the response stream if successful."
   (let* ((api-key (get-key *keyname*))
-         (api-url (format nil "https://generativelanguage.googleapis.com/v1beta/models/~a:generateContent?key=~a"
-                          model api-key))
-         (json-payload-lisp-object (jsown:new-js ("contents" msgs)))
+         (api-url (format nil "https://generativelanguage.googleapis.com/v1beta/models/~a:generateContent?key=~a" model api-key))
+         (json-payload-lisp-object (make-api-request-payload msgs))
          (json-payload-string (jsown:to-json json-payload-lisp-object))
          (headers '(("Content-Type" . "application/json"))))
     (xlg :thinking-log "~&Making API request to: ~a" api-url)
     (xlg :thinking-log "JSON string being sent: ~a" json-payload-string)
-    (handler-case
-        (drakma:http-request api-url
-                             :method :post
-                             :content-type "application/json"
-                             :content json-payload-string
-                             :additional-headers headers
-                             :want-stream t
-                             :force-ssl t)
+    (handler-case (drakma:http-request api-url :method :post :content-type "application/json" :content json-payload-string :additional-headers headers :want-stream t :force-ssl t)
       (drakma:drakma-error (c)
         (error "HTTP Request Failed: ~a" c))
       (error (c)
@@ -289,442 +239,289 @@
         (xlg :thinking-log "~&Raw JSON string received:~% ~a" pjs)
         pjs)
     (error (c)
+      (xlg :error-log "~&Failed to parse JSON response: ~a" c)
       (error "Failed to parse JSON response: ~a" c))))
 
 (defun extract-txt (parsed-json)
-  "Extracts the generated text from the parsed Gemini API JSON response using jsown accessors.
-   Returns the text string or NIL if not found."
+  "Extracts the generated text from the parsed Gemini API JSON response using jsown accessors. Returns the text string or NIL if not found."
   (cond ((jsown:keyp parsed-json "error")
          (progn
            (xlg :thinking-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
-           (xlgt :answer-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
+           (xlg :answer-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
            nil))
         ((jsown:keyp parsed-json "candidates")
          (let* ((candidates (jsown:val parsed-json "candidates"))
-                (first-candidate (car candidates)))
-           (when first-candidate
-             (let* ((content (jsown:val first-candidate "content")))
-               (when (and content (jsown:keyp content "parts"))
-                 (let* ((parts (jsown:val content "parts"))
-                        (first-part (car parts)))
-                   (when (and first-part (jsown:keyp first-part "text"))
-                     (jsown:val first-part "text"))))))))
-        (t (xlgt :answer-log "No parsed json available: ~a" parsed-json)
-           "No parsed json available. Why?")))
+                (first-candidate (car candidates))
+                (content (jsown:val first-candidate "content"))
+                (parts (jsown:val content "parts"))
+                (first-part (car parts))
+                (text (jsown:val first-part "text")))
+           (xlg :answer-log "~&Raw answer: ~a" text)
+           (setf text (string-trim '(#\Space #\Tab #\Newline) text))
+           (format t "~%~a~%" text)
+           (if *run-out-s*
+               (format *run-out-s* "~a~%" text))
+           text))
+        (t
+         (xlg :error-log "~&Unexpected API response format: ~a" parsed-json)
+         (error "Unexpected API response format."))))
 
+;; --- Primitives for Prompt Assembly ---
 
-(defun read-file (fpath)
-  "Reads the entire content of a file into a string.
-   Returns NIL if the file cannot be read."
-  (cond ((probe-file fpath)
-         (handler-case
-             (uiop:read-file-string fpath)
-           (file-error (c)
-             (xlg :thinking-log "~&Error reading file ~a: ~a" fpath c)
-             nil)
-           (error (c)
-             (xlg :thinking-log "~&An unexpected error occurred while reading file ~a: ~a" fpath c)
-             nil)))
-        (t (xlg :thinking-log "~&No such file as ~a:" fpath)
-           nil)))
+(defun assemble-context-prompt (ctx-content)
+  "Assembles the context section of the prompt."
+  (when (s/nz ctx-content)
+    (format nil "--- Context Files --~%~a~%--- End Context Files --~%" ctx-content)))
 
-(defun proc-ctx-files (ctx-files)
-  "Reads content from a list of context files and concatenates them.
-   Returns a single string with all file contents, or NIL if no files or errors."
-  (when ctx-files
-    (let ((all-content (make-string-output-stream)))
-      (format all-content "--- Context Files --~%~%")
-      (dolist (file ctx-files)
-        (let ((content (read-file file)))
-          (if content
-              (format all-content "File: ~a~%```~a```~%~%" file content)
-              (format t "~&Warning: Could not read context file '~a'. Skipping.~%" file))))
-      (format all-content "--- End Context Files --~%~%")
-      (get-output-stream-string all-content))))
-
-(defun str-starts-with-p (str prefix)
-  "Checks if STR starts with PREFIX."
-  (and (>= (length str) (length prefix))
-       (string= str prefix :end1 (length prefix))))
-
-(defun save-cmd (cmd-str tag &key (if-exists :supersede))
-  "Implements the ':save <filename>' command. Opens a new runtime output stream
-   or closes the existing one. `:if-exists` controls file overwrite/append behavior."
-  (let* ((parts (s-s cmd-str #\Space :rem-empty t))
-         (fpath (second parts)))
-    (if fpath
-        (handler-case
+(defun assemble-input-files-prompt (input-files)
+  "Reads and assembles the content of input files into a prompt section."
+  (let ((prompt-list nil)
+        (all-files-read-ok t))
+    (when input-files
+      (dolist (file-path input-files)
+        (if (uiop:file-exists-p file-path)
+            (let ((file-content (uiop:read-file-string file-path)))
+              (push (format nil "===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]==="
+                            (file-namestring file-path)
+                            file-content
+                            (file-namestring file-path))
+                    prompt-list))
             (progn
-              (when *run-out-s* ; Close existing stream if any
-                (format t "~&Closing previous runtime output file.~%")
-                (close *run-out-s*))
-              (multiple-value-bind (pathspec creat)
-                  (ensure-directories-exist fpath :verbose t)
-                (xlgt :thinking-log "directory ~s created ~s" pathspec creat))
-              (setf *run-out-s* (open fpath :direction :output :if-exists if-exists :if-does-not-exist :create))
-              (format t "~&Saving conversation answers to: ~a (if-exists: ~a)~%" fpath if-exists)
-              (xlgt :answer-log "~&Saving conversation answers to: ~a (if-exists: ~a)~%" fpath if-exists)
-              (format *run-out-s* "~&--- Runtime Conversation Answers Log Started (~a) ---~%~%" tag))
-          (file-error (c)
-            (format t "~&Error opening file for saving: ~a~%" c)
-            (xlgt :answer-log "~&Error opening file for saving: ~a~%" c)
-            (setf *run-out-s* nil)))
-        (progn
-          (format t "~&Usage: :save <filename>. No filename provided fpath ~s.~%" fpath)
-          (setf *run-out-s* nil)))))
+              (setf all-files-read-ok nil)
+              (xlg :error-log "~&Failed to read input file: ~a" file-path)
+              (format t "~&Failed to read input file: ~a~%" file-path)
+              (if *exit-on-error*
+                  (return-from assemble-input-files-prompt (values nil nil)))))))
+    (values (format nil "~{~a~%~%~}" (nreverse prompt-list)) all-files-read-ok)))
 
-(defun set-gemini-output-file (filepath &key (append t))
-  "Sets the file where Gemini's responses will be saved.
-   If APPEND is T (default), responses are appended. If NIL, the file is overwritten.
-   This internally calls save-cmd."
-  (let ((if-exists-option (if append :append :supersede)))
-    (save-cmd (format nil ":save ~a" filepath) *d-tag* :if-exists if-exists-option)
-    (if append
-        (format t "~&Responses will be appended to '~a'.~%" filepath)
-        (format t "~&Responses will overwrite '~a'.~%" filepath))))
+(defun assemble-user-prompt (prompt)
+  "Formats the user's initial prompt."
+  (when (s/nz prompt)
+    (format nil "My prompt: ~a" prompt)))
 
-(defun proc-input-files (input-files)
-  "Reads content from a list of input files and concatenates them using the BEGIN_FILE/END_FILE markers.
-   Returns a single string with all file contents, or (values nil :file-error) if any file cannot be read."
-  (when input-files
-    (let ((all-content (make-string-output-stream)))
-      (dolist (file input-files)
-        (let ((content (read-file file)))
-          (if content
-              (format all-content "~&===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]===~%~%"
-                      file content file)
-              (progn
-                (format t "~&Error: Could not read input file '~a'. Aborting prompt.~%" file)
-                (flush-all-log-streams)
-                (when *exit-on-error*
-				  (error (format nil "Input file ~s missing" file)))
-                (return-from proc-input-files (values nil :file-error))))))
-      (get-output-stream-string all-content))))
-
-(defun gem-interact (u-prompt conv-hist model)
-  "Sends a user prompt to Gemini, gets a response, and updates history.
-   Returns (values new-conversation-history success-p)."
-  (xlg :thinking-log "~&User: ~a" u-prompt)
-  (xlgt :answer-log "User: ~a" u-prompt)
-
-  (let* ((new-u-turn (msg-turn "user" u-prompt))
-         (upd-hist (append conv-hist (list new-u-turn)))
-         (resp-stream (api-req upd-hist :model model))
-         (parsed-json (parse-api-resp resp-stream))
-         (model-resp-txt (extract-txt parsed-json))
-         (new-m-turn (msg-turn "model" (or model-resp-txt "Error: No response"))))
-    (gem-turn-resp model-resp-txt parsed-json new-u-turn new-m-turn upd-hist :turn-type "follow-up turn")))
-
-(defun gem-turn-resp (model-resp-txt parsed-json u-turn m-turn conv-hist &key (turn-type "turn"))
-  "Processes a Gemini API response for a single turn,
-   logging the output and updating conversation history.
-   Returns (values updated-conversation-history t) on success,
-   or (values nil nil) on error, signaling the need for the caller to stop."
-  (if model-resp-txt
-      (progn
-        (xlg :answer-log "~&Gemini: ~a" model-resp-txt :timestamp t)
-        (when *run-out-s*
-          (format *run-out-s* "~&~a~%" model-resp-txt)
-          (finish-output *run-out-s*)) ; Ensure content is written immediately
-        ;; Log the specific user and model turns involved in this step
-        (xlg :thinking-log "Turns processed: ~s" (list u-turn m-turn))
-        (flush-all-log-streams)
-        (values (append conv-hist (list u-turn m-turn)) t))
-      (progn
-        (xlgt :answer-log "~&Error on ~a:~%~a: ~a" turn-type
-              parsed-json "No text generated or unexpected response structure.")
-        (when *run-out-s* ; Log API errors that prevent text generation, as they are part of the answer stream
-          (format *run-out-s* "~&Error on ~a:~% ~a ~a~%" turn-type
-                  parsed-json "No text generated or unexpected response structure.")
-          (finish-output *run-out-s*))
-        (xlg :thinking-log "Parsed JSON for ~a: ~s" turn-type parsed-json)
-        (flush-all-log-streams)
-        (values nil nil))))
-
-(defun quit-cmd ()
-  "Performs cleanup when the 'quit' command is issued."
-  (format t "~&~%Ending conversation.~%")
-  (xlgt :answer-log "~&~%Ending conversation.")
-  (when *run-out-s*
-    (format *run-out-s* "~&~%Ending conversation.~%")
-    (close *run-out-s*)
-    (setf *run-out-s* nil))
-  (flush-all-log-streams))
-
-(defun read-usr-cmd (raw-in)
-  "Parses raw user input and determines the command type and associated data.
-   Returns (values command-keyword data)."
-  (cond
-    ((string-equal raw-in "quit")
-     (values :quit nil))
-    ((str-starts-with-p raw-in ":save ")
-     (values :save raw-in))
-    ((str-starts-with-p raw-in ":input ")
-     (values :input raw-in))
-    (t
-     (values :prompt raw-in))))
-
-(defun proc-send-prompt (proc-prompt conv-hist model)
-  "Processes a valid user prompt (which may include file content) and interacts with Gemini.
-   Returns (values new-history success-p)."
-  (gem-interact proc-prompt conv-hist model))
-
-(defun chat-loop (conv-hist model tag)
-  "Manages the interactive follow-up turns of a Gemini conversation.
-   Takes the current conversation history, model, and tag as input.
-   Returns the final conversation history."
-  (when *single-shot*
-    (xlgt :answer-log "~&~%Single shot, exiting")
-    (return-from chat-loop ""))
-  (let ((pending-input-content nil))
-    (loop
-      (xlgt :answer-log "~&~%Enter your next prompt (or type 'quit' to end, ':save <filename>' to save output, ':input <filename>' to add a file):")
-      (let ((raw-usr-in (read-line)))
-        (multiple-value-bind (cmd-type cmd-data)
-            (read-usr-cmd raw-usr-in)
-          (ecase cmd-type
-            (:quit
-             (quit-cmd)
-             (return conv-hist))          ; Exit loop and return history
-            (:save
-             (save-cmd cmd-data tag) ; cmd-data is the full ":save <filename>" string
-             (continue))             ; Continue to next loop iteration
-            (:input
-             (let* ((file-list-str (string-trim '(#\Space) (subseq cmd-data 6)))
-                    (file-list (s-s file-list-str #\,)))
-               (multiple-value-bind (files-content file-read-status)
-                   (proc-input-files file-list)
-                 (cond
-                   ((eq file-read-status :file-error)
-                    (format t "~&Skipping turn due to file input error.~%")
-                    (continue))
-                   (t
-                    (setf pending-input-content files-content)
-                    (format t "~&File(s) content loaded. It will be sent with your next prompt. Enter your prompt now:~%")
-                    (continue))))))
-            (:prompt
-             (let ((final-prompt-text (if pending-input-content
-                                          (format nil "~a~a" pending-input-content cmd-data)
-                                          cmd-data)))
-               (multiple-value-bind (new-total-hist success)
-                   (proc-send-prompt final-prompt-text conv-hist model)
-                 (if success
-                     (setf conv-hist new-total-hist)
-                     (return conv-hist)))
-               (setf pending-input-content nil))) ; Clear the pending content after use
-            (:error
-             (format t "~&Skipping turn due to input error.~%")
-             (continue))))))))
-
-(defun gem-conv (init-prompt &key (model "gemini-2.5-pro") (tag *d-tag*))
-  "Starts and manages a multi-turn conversation with the Gemini API.
-   Takes an initial prompt, then allows for follow-up questions.
-   Returns the complete conversation history."
-  (with-open-log-files ((:answer-log (format nil "~a-the-answer.log" tag) :ymd)
-                        (:thinking-log (format nil "~a-thinking.log" tag) :ymd))
-    (let* ((ver (get-version))
-           (vermsg (format nil "begin, gemini-chat version ~a----------------------------------------" ver)))
-      (xlg :answer-log vermsg)
-      (xlg :thinking-log vermsg))
-
-    (let ((conv-hist nil))
-
-      ;; First turn (initial prompt)
-      (multiple-value-bind (new-hist success)
-          (gem-interact init-prompt conv-hist model)
-        (if success
-            (setf conv-hist new-hist)
-            (return-from gem-conv nil)))
-
-      ;; If the initial turn was successful, proceed to the interactive loop
-      (when conv-hist
-        (setf conv-hist (chat-loop conv-hist model tag)))
-      conv-hist)))
-
-(defun string-identity-parser (s)
-  "A parser function for com.google.flag that simply returns the string itself
-   and a success boolean T. Used for list flags where each element is a string."
-  (let ((full-l nil))
-    (mapc #'(lambda (k)
-              (push k full-l))
-          (s-s s #\,))
-    (values (reverse full-l) t)))
-
-;; New function to get the default context file path
-(defun get-default-context-file ()
-  "Checks for 'context.lsp' in the current working directory.
-   Returns the full path if found, otherwise NIL."
-  (let ((default-path (uiop:merge-pathnames* "context.lsp" (uiop:getcwd))))
-    (when (uiop:file-exists-p default-path)
-      (namestring default-path))))
-
-(defun initial-prompt (ctx-content &optional input-file-paths initial-prompt-text)
-  "Assembles the final initial prompt string for Gemini based on provided components.
-   Returns (values final-prompt-string success-p) or (values nil nil) on error.
-   This version is suitable for both command-line and SLIME use."
-  (let* ((actual-input-files (or input-file-paths *input-files*))
-         (actual-initial-prompt-text (or initial-prompt-text
-                                         (string-trim '(#\Space #\Newline #\Tab) (format nil "~{~a ~}" *remaining-args*))))
-         (final-prompt nil)
-         (files-content nil))
-
-    (when actual-input-files
-      (multiple-value-bind (content file-read-status)
-          (proc-input-files actual-input-files)
-        (when (eq file-read-status :file-error)
-          (return-from initial-prompt (values nil nil)))
-        (setf files-content content)))
-
-    (cond
-      ;; Case 1: No initial prompt via CLI/args and no input files, prompt interactively
-      ((and (null actual-input-files) (s/z actual-initial-prompt-text) (null input-file-paths) (null initial-prompt-text))
-       (format t "~&Please enter your initial question (or type 'quit' to end):~%")
-       (let ((usr-in (read-line)))
-         (when (string-equal usr-in "quit")
-           (return-from initial-prompt (values nil nil)))
-         (setf final-prompt (format nil "~a~a~a"
-                                    (or ctx-content "")
-                                    (or files-content "")
-                                    usr-in))))
-
-      ;; Case 2: Input files and/or prompt text provided
-      (t
-       (setf final-prompt (format nil "~a~aMy prompt: ~a"
-                                  (or ctx-content "")
-                                  (or files-content "")
-                                  actual-initial-prompt-text))))
-
-    (values final-prompt t))) ; Return T for success
-
-(defun start-chat (init-prompt tag &key (model "gemini-2.5-pro"))
-  "Initiates the Gemini conversation with the assembled initial prompt and tag."
-  (format t "Conversation tag is: [~a]~%" tag)
-  (gem-conv init-prompt :model model :tag tag))
-
-(defun show-set-options ()
-  (xlgt :answer-log "options as they are set")
-  (xlgt :answer-log "context ~s" *context*)
-  (xlgt :answer-log "save ~s" *save*)
-  (xlgt :answer-log "tag ~s" *tag*)
-  (xlgt :answer-log "input_files ~s" *input-files*)
-  (xlgt :answer-log "help ~s" *help-is*)
-  (xlgt :answer-log "exit-on-error ~s" *exit-on-error*)
-  (xlgt :answer-log "remaining options ~s" *remaining-args*))
-
-;; New function for setting log file base name
-(defun set-log-file-base (base-name)
-  "Sets the base name for the xlg-lib log files.
-   Example: (set-log-file-base \"my-session-logs\")"
-  (setf *log-file-base* base-name)
-  (xlgt :answer-log "Log file base name set to: ~a" *log-file-base*))
-
-(defun run-chat (&rest raw-args)
-  "Main entry point for the gemini-chat application for command-line use.
-   Handles argument parsing, initial prompt assembly, and starting the chat session."
-  (let* ((ver (get-version))
-         (cmd-args
-           (if (and (consp raw-args) (listp (car raw-args)))
-               (car raw-args)
-               raw-args)))
-    (format t "~&gemini-chat version ~a~%" ver)
-
-    (handler-case
-        (setf *remaining-args* (parse-command-line cmd-args))
-      (error (c)
-        (format t "~&Error parsing arguments: ~a~%, comand-args: ~s~%" c cmd-args)
-        (format t "~&Run with `--help` for usage information.~%")
-        (error (format nil "~&Error parsing arguments: ~a~%, comand-args: ~s~%" c cmd-args))))
-    (let ((badargs nil))
-      (mapc #'(lambda (m)
-                (if (and (> (length m) 2)
-                         (string= "--" (subseq m 0 2))
-                         (string= "-" (subseq m 0 1)))
-                    (push m badargs)))
-            *remaining-args*)
-	  (show-set-options)
-      ;; Access flag values directly from their special variables
-      (cond (badargs
-			 (xlgt :answer-log "Error--Unprocessed options: ~s, exiting." (reverse badargs)))
-			(*help-is*
-			 (print-help))
-			(t (let* ((ctx-content (proc-ctx-files *context*)))
-				 (when (s/nz *save*)
-                   (save-cmd (format nil ":save ~a" *save*) *tag*))
-
-				 (multiple-value-bind (f-prompt success-p)
-					 (initial-prompt ctx-content)
-                   (unless success-p
-					 (format t "~&Initial prompt generation failed or user quit. Exiting.~%")
-					 ;; This is the new fix. If the prompt fails to generate and the flag is set, quit.
-					 (when *exit-on-error*
-                       (error (format nil "~&Initial prompt generation failed or user quit. Exiting.~%")))
-					 (return-from run-chat nil))
-
-                   (start-chat f-prompt *tag*))))))))
-
-
-;; --- SLIME-specific Convenience Functions ---
-
-(defun slime-chat (prompt &key (input-files nil) (context-files nil) (save-file nil) (model "gemini-2.5-pro") (tag *d-tag*))
-  "A convenient function to send a request to Gemini from SLIME.
-   Arguments:
-   - PROMPT: The main text prompt for Gemini.
-   - :INPUT-FILES: Optional. A list of paths to files whose content will be sent as part of the prompt.
-   - :CONTEXT-FILES: Optional. A list of paths to context files. Defaults to 'context.lisp' if present in CWD.
-   - :SAVE-FILE: Optional. Path to a file where Gemini's responses will be appended.
-   - :MODEL: Optional. The Gemini model to use (default: 'gemini-2.5-pro').
-   - :TAG: Optional. A unique tag for logging purposes (default: 'chat')."
-
-  ;; Set the log base name if no explicit tag is provided but *log-file-base* is default.
-  ;; Otherwise, the xlg-lib's default behavior for naming based on tag will apply.
-  (when (string= tag *d-tag*)
-    (set-log-file-base (format nil "slime-chat-~a" tag)))
-
-  ;; Handle context files, preferring explicitly provided, then default
-  (let* ((actual-context-files (if context-files
-                                   context-files
-                                   (let ((default-ctx (get-default-context-file)))
-                                     (if default-ctx (list default-ctx) nil))))
-         (ctx-content (proc-ctx-files actual-context-files)))
-    (format t "~&Starting SLIME chat session...~%")
-    (format t "Prompt: ~a~%" prompt)
-    (when input-files (format t "Input Files: ~a~%" input-files))
-    (when actual-context-files (format t "Context Files: ~a~%" actual-context-files))
-    (when save-file (format t "Save File: ~a~%" save-file))
-    (format t "Model: ~a~%" model)
-    (format t "Tag: ~a~%" tag)
-
-    ;; Initialize *run-out-s* if a save-file is provided
-    (when save-file
-      (save-cmd (format nil ":save ~a" save-file) tag :if-exists :append)) ; Explicitly append
-
-    (multiple-value-bind (assembled-prompt success-p)
-        (initial-prompt ctx-content input-files prompt)
+(defun build-full-prompt (ctx-content input-files prompt)
+  "Constructs the complete prompt by combining all sections."
+  (let ((full-prompt-list nil))
+    (multiple-value-bind (input-files-string success-p) (assemble-input-files-prompt input-files)
       (unless success-p
-        (format t "~&Failed to assemble initial prompt. Exiting SLIME chat.~%")
-        (return-from slime-chat nil))
+        (return-from build-full-prompt (values nil nil)))
+      (when ctx-content
+        (push (assemble-context-prompt ctx-content) full-prompt-list))
+      (when input-files-string
+        (push input-files-string full-prompt-list))
+      (when prompt
+        (push (assemble-user-prompt prompt) full-prompt-list))
+      (let ((assembled-prompt (format nil "~{~a~%~%~}" (nreverse full-prompt-list))))
+        (xlg :thinking-log "~&Full assembled prompt for Gemini:~%~a~%" assembled-prompt)
+        (values assembled-prompt t)))))
 
-      (unwind-protect
-           (progn
-             (format t "~&Sending request to Gemini...~%")
-             (gem-conv assembled-prompt :model model :tag tag))
-        ;; Ensure output stream is closed on exit
-        (when *run-out-s*
-          (format t "~&Closing save file: ~a~%" (file-namestring (pathname *run-out-s*)))
-          (close *run-out-s*)
-          (setf *run-out-s* nil))))))
+(defun gem-conv (initial-prompt &key (model "gemini-2.5-pro"))
+  "Handles a single conversation turn with Gemini. 'initial-prompt' is the first message."
+  (let ((conversation-history (list (make-message-turn "user" (list (make-text-part initial-prompt))))))
+    (loop
+      (handler-case
+          (let* ((resp-stream (api-req conversation-history :model model))
+                 (parsed-json (parse-api-resp resp-stream)))
+            (close resp-stream)
+            (let ((answer (extract-txt parsed-json)))
+              (when (jsown:keyp parsed-json "candidates")
+                (push (make-message-turn "model" (list (make-text-part answer))) conversation-history))
+              (unless (or (string= answer "quit") (string= answer ":quit"))
+                (format t "~&>> ")
+                (finish-output)
+                (let ((user-input (read-line)))
+                  (when (or (string= user-input "quit") (string= user-input ":quit"))
+                    (return))
+                  (let ((command (if (s/nz user-input)
+                                     (string-trim '(#\Space #\Tab)
+                                                  (car (s-s user-input #\Space :rem-empty nil)))
+                                     "")))
+                    (cond
+                      ((string= command ":input")
+                       (input-cmd user-input))
+                      ((string= command ":save")
+                       (save-cmd user-input))
+                      (t
+                       (push (make-message-turn "user" (list (make-text-part user-input))) conversation-history)))))))
+            (when *single-shot* (return)))
+        (error (e)
+          (xlg :error-log "~&An error occurred: ~a~%" e)
+          (format t "~&An error occurred: ~a~%~%" e)
+          (when *exit-on-error*
+            (return)))))))
+
+(defun save-cmd (user-input &key (if-exists :supersede))
+  "Handles the :save command, opening a new file for responses."
+  (let* ((args (s-s user-input #\Space :rem-empty t))
+         (file-path (second args)))
+    (when (s/z file-path)
+      (format t "~&Please specify a file to save to, e.g., :save my-session.log~%")
+      (return-from save-cmd))
+    (when *run-out-s*
+      (format t "~&Closing previous save file: ~a~%" (file-namestring (pathname *run-out-s*)))
+      (close *run-out-s*)
+      (setf *run-out-s* nil))
+    (handler-case
+        (let ((actual-path (if (uiop:absolute-pathname-p file-path)
+                               file-path
+                               (uiop:merge-pathnames* file-path (uiop:getcwd)))))
+          (xlg :thinking-log "~&Opening save file: ~a" actual-path)
+          (setf *run-out-s* (open actual-path :direction :output :if-does-not-exist :create :if-exists if-exists))
+          (format t "~&Now saving responses to: ~a~%" actual-path))
+      (error (c)
+        (xlg :error-log "~&Failed to open file for saving: ~a" c)
+        (format t "~&Failed to open file for saving: ~a~%" c)
+        (setf *run-out-s* nil)))))
+
+(defun input-cmd (user-input)
+  "Handles the :input command. Currently just logs the intention."
+  (let* ((args (s-s user-input #\Space :rem-empty t))
+         (files (second args)))
+    (when (s/z files)
+      (format t "~&Please specify input files, e.g., :input file1.txt,file2.lisp~%")
+      (return-from input-cmd))
+    (format t "~&[Note: Input files functionality is part of the initial prompt only in this version. Files will be included in the next request, but not in interactive mode as of yet]~%")))
+
+(defun get-default-context-file ()
+  "Returns the path to the default context file if it exists."
+  (let ((default-path (uiop:merge-pathnames* "gemini-chat-context.md" (uiop:getcwd))))
+    (if (uiop:file-exists-p default-path)
+        default-path
+        nil)))
+
+(defun proc-ctx-files (file-list)
+  "Processes a list of context files and returns a single string of their combined content."
+  (when file-list
+    (let ((result (make-string-output-stream)))
+      (dolist (file file-list)
+        (handler-case
+            (format result "~&File: ~a~%```~%~a~%```~%~%" (file-namestring file) (uiop:read-file-string file))
+          (error (e)
+            (xlg :error-log "~&Failed to read context file: ~a" e)
+            (format t "~&Failed to read context file: ~a~%" e))))
+      (get-output-stream-string result))))
+
+(defun show-opts (&key (bad-args nil))
+  "Prints the command-line options to the thinking log file, using the flag special variables."
+  (xlg :thinking-log "~&Entering run-chat with flags:" )
+  (xlg :thinking-log "Keyname: ~a" *keyname*)
+  (xlg :thinking-log "Context files: ~a" *context*)
+  (xlg :thinking-log "Save file: ~a" *save*)
+  (xlg :thinking-log "Tag: ~a" *tag*)
+  (xlg :thinking-log "Input files: ~a" *input-files*)
+  (xlg :thinking-log "Help requested: ~a" *help-is*)
+  (xlg :thinking-log "Single shot: ~a" *single-shot*)
+  (xlg :thinking-log "Exit on error: ~a" *exit-on-error*)
+  (xlg :thinking-log "Using model: ~a" "gemini-2.5-pro") ; Model is currently hardcoded in run-chat
+  (xlg :thinking-log "Remaining args: ~a" *remaining-args*)
+  (when bad-args
+    (xlg :thinking-log "Unprocessed command-line options: ~s" bad-args)))
+
+(defun run-chat (args &key (model "gemini-2.5-pro"))
+  "Main function to run the chat loop. 'args' is the list of command-line arguments."
+  (let* ((remaining-args (com.google.flag:parse-command-line args))
+         (help-is *help-is*)
+         (input-files *input-files*)
+         (context-files *context*)
+         (tag *tag*)
+         (prompt (string-trim '(#\Space #\Tab #\Newline) (format nil "~{~a~^ ~}" remaining-args))))
+
+    (setf *remaining-args* remaining-args) ; Store remaining-args for show-opts to access
+
+    (let ((badargs (loop for m in *remaining-args*
+                         when (and (plusp (length m))
+                                   (char= (char m 0) #\-))
+                           collect m)))
+      (show-opts :bad-args badargs)
+      (when badargs
+        (error "Unprocessed command-line options: ~s" badargs)))
+
+    (if help-is
+        (print-help)
+        (with-open-log-files ((:thinking-log (format nil "~a-thinking.log" tag) :ymd)
+                              (:answer-log (format nil "~a-the-answer.log" tag) :ymd)
+                              (:error-log (format nil "~a-error.log" tag) :ymd))
+          (let* ((actual-context-files (if context-files
+                                           context-files
+                                           (let ((default-ctx (get-default-context-file)))
+                                             (if default-ctx (list default-ctx) nil))))
+                 (ctx-content (proc-ctx-files actual-context-files)))
+            (when (or (s/nz prompt) input-files context-files)
+              (multiple-value-bind (assembled-prompt success-p)
+                  (build-full-prompt ctx-content input-files prompt)
+                (unless success-p
+                  (format t "~&Failed to assemble initial prompt. Exiting.~%")
+                  (return-from run-chat nil))
+                (unwind-protect
+                     (progn
+                       (format t "~&Sending request to Gemini...~%")
+                       (gem-conv assembled-prompt :model model))
+                  ;; Ensure output stream is closed on exit
+                  (when *run-out-s*
+                    (format t "~&Closing save file: ~a~%" (file-namestring (pathname *run-out-s*)))
+                    (close *run-out-s*)
+                    (setf *run-out-s* nil)))))
+            (format t "~&Exiting.~%"))))))
+
+(defun slime-chat (&key (input-files nil) (context-files nil) (save-file nil) (tag *d-tag*) (model "gemini-2.5-pro") (prompt "") (exit-on-error nil) (keyname "personal"))
+  "Starts a chat session from SLIME with the provided options."
+  (let ((*input-files* input-files)
+        (*context* context-files)
+        (*save* save-file)
+        (*tag* tag)
+        (*keyname* keyname)
+        (*single-shot* nil)
+        (*exit-on-error* exit-on-error))
+
+    (with-open-log-files ((:thinking-log (format nil "~a-thinking.log" *tag*) :ymd)
+                          (:answer-log (format nil "~a-the-answer.log" *tag*) :ymd)
+                          (:error-log (format nil "~a-error.log" *tag*) :ymd))
+      (xlg :thinking-log "~&Entering SLIME chat with args: ~s" (list :input-files input-files :context-files context-files :save-file save-file :tag *tag* :model model :prompt prompt))
+
+      (let* ((actual-context-files (if context-files
+                                     context-files
+                                     (let ((default-ctx (get-default-context-file)))
+                                       (if default-ctx (list default-ctx) nil))))
+           (ctx-content (proc-ctx-files actual-context-files)))
+        (format t "~&Starting SLIME chat session...~%")
+        (format t "~&Prompt: ~a~%~%" prompt)
+        (when input-files (format t "~&Input Files: ~a~%~%" input-files))
+        (when actual-context-files (format t "~&Context Files: ~a~%~%" actual-context-files))
+        (when save-file (format t "~&Save File: ~a~%~%" save-file))
+        (format t "~&Model: ~a~%~%" model)
+        (format t "~&Tag: ~a~%~%" *tag*)
+
+        ;; Initialize *run-out-s* if a save-file is provided
+        (when save-file
+          (save-cmd (format nil ":save ~a" save-file) :if-exists :append)) ; Explicitly append
+
+        (multiple-value-bind (assembled-prompt success-p)
+            (build-full-prompt ctx-content input-files prompt)
+          (unless success-p
+            (format t "~&Failed to assemble initial prompt. Exiting SLIME chat.~%")
+            (return-from slime-chat nil))
+
+          (unwind-protect
+               (progn
+                 (format t "~&Sending request to Gemini...~%")
+                 (gem-conv assembled-prompt :model model))
+            ;; Ensure output stream is closed on exit
+            (when *run-out-s*
+              (format t "~&Closing save file: ~a~%" (file-namestring (pathname *run-out-s*)))
+              (close *run-out-s*)
+              (setf *run-out-s* nil))))))))
 
 (defun top ()
   "Toplevel function for the compiled gemini-chat executable.
    It retrieves arguments from sb-ext:*posix-argv* and passes them to run-chat."
   ;; com.google.flag:parse-command-line without :argv defaults to sb-ext:*posix-argv*
   ;; However, run-chat expects a list of strings, so pass (rest sb-ext:*posix-argv*)
-  (format t "Top: we have command line args of ~%~s~%" sb-ext:*posix-argv*)
+  (format t "~&Top: we have command line args of ~%~s~%~%" sb-ext:*posix-argv*)
   (run-chat (rest sb-ext:*posix-argv*)))
 
 (defun save-core-uncompressed ()
   "Saves the current Lisp image as an uncompressed executable for faster development."
-  (format t "Building gemini-chat version ~a (uncompressed)~%" (get-version))
+  (format t "~&Building gemini-chat version ~a (uncompressed)~%~%" (get-version))
   (sb-ext:save-lisp-and-die "gemini-chat"
                             :toplevel #'top
                             :save-runtime-options t
@@ -732,9 +529,9 @@
 
 (defun save-core ()
   "Saves the current Lisp image as an executable."
-  (format t "Building gemini-chat version ~a~%" (get-version))
+  (format t "~&Building gemini-chat version ~a~%~%" (get-version))
   (sb-ext:save-lisp-and-die "gemini-chat"
                             :toplevel #'top
                             :save-runtime-options t
-                            :compression 22
-                            :executable t))
+                            :executable t
+                            :compression t))
