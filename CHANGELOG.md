@@ -1,6 +1,16 @@
 ---
 ## CHANGELOG.md
 ---
+## Version 1.4.9 - 2025-08-26
+
+### Added
+
+* **API Key Management**: Added a new `--keyname` flag to specify a key by name. The `gemini-chat` program can now retrieve API keys from a user-defined file at `~/.gemini/keys.lsp`.
+
+### Changed
+
+* **License**: The project license has been changed from MIT to GPLv3.
+* **Help Output Formatting**: The `print-help` function has been refactored to use `format` directives (`~@<...~:>`) for intelligent line wrapping, ensuring that all help text lines are at most 100 characters long.
 ## Version 1.3.8 - 2025-07-19
 
 ### Changed
