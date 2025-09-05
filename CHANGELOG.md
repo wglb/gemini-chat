@@ -1,6 +1,9 @@
 ---
 ## CHANGELOG.md
 ---
+## Version 1.4.10 2025-09-05
+* ** Remove extra package qualifiers.
+
 ## Version 1.4.9 - 2025-08-26
 
 ### Added
