@@ -419,7 +419,7 @@
 
 (defun run-chat (args &key (model "gemini-2.5-pro"))
   "Main function to run the chat loop. 'args' is the list of command-line arguments."
-  (let* ((remaining-args (com.google.flag:parse-command-line args))
+  (let* ((remaining-args (parse-command-line args))
          (help-is *help-is*)
          (input-files *input-files*)
          (context-files *context*)
