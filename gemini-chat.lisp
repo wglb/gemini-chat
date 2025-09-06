@@ -275,6 +275,7 @@
 
 (defun assemble-input-files-prompt (input-files)
   "Reads and assembles the content of input files into a prompt section."
+  ;; TODO use file-packer. Also make public file-packer github
   (let ((prompt-list nil)
         (all-files-read-ok t))
     (when input-files
@@ -326,8 +327,8 @@
             (let ((answer (extract-txt parsed-json)))
               (when (jsown:keyp parsed-json "candidates")
                 (push (make-message-turn "model" (list (make-text-part answer))) conversation-history))
-              (unless (or (string= answer "quit") (string= answer ":quit"))
-                (format t "~&>> ")
+              (unless (or (string= answer "quit") (string= answer ":quit") *single-shot*)
+                (format t "~&Single shot is ~s>> " *single-shot*)
                 (finish-output)
                 (let ((user-input (read-line)))
                   (when (or (string= user-input "quit") (string= user-input ":quit"))
@@ -339,8 +340,10 @@
                     (cond
                       ((string= command ":input")
                        (input-cmd user-input))
-                      ((string= command ":save")
+
+					  ((string= command ":save")
                        (save-cmd user-input))
+
                       (t
                        (push (make-message-turn "user" (list (make-text-part user-input))) conversation-history)))))))
             (when *single-shot* (return)))
@@ -417,51 +420,56 @@
   (when bad-args
     (xlg :thinking-log "Unprocessed command-line options: ~s" bad-args)))
 
-(defun run-chat (args &key (model "gemini-2.5-pro"))
-  "Main function to run the chat loop. 'args' is the list of command-line arguments."
-  (let* ((remaining-args (parse-command-line args))
-         (help-is *help-is*)
-         (input-files *input-files*)
-         (context-files *context*)
-         (tag *tag*)
-         (prompt (string-trim '(#\Space #\Tab #\Newline) (format nil "~{~a~^ ~}" remaining-args))))
-
-    (setf *remaining-args* remaining-args) ; Store remaining-args for show-opts to access
-
-    (let ((badargs (loop for m in *remaining-args*
+(defun chk-args (args)
+  (let ((remaining-args (parse-command-line args)))
+	(setf *remaining-args* remaining-args)
+	(let ((badargs (loop for m in *remaining-args*
                          when (and (plusp (length m))
                                    (char= (char m 0) #\-))
                            collect m)))
       (show-opts :bad-args badargs)
       (when badargs
-        (error "Unprocessed command-line options: ~s" badargs)))
+        (error "Unprocessed command-line options: ~s" badargs)
+		#+hil (return-from chk-args nil))
+	  (get-key *keyname*))
+	(cond (*help-is*
+		   (print-help)
+		   nil)
+		  (t t))))
 
-    (if help-is
-        (print-help)
-        (with-open-log-files ((:thinking-log (format nil "~a-thinking.log" tag) :ymd)
-                              (:answer-log (format nil "~a-the-answer.log" tag) :ymd)
-                              (:error-log (format nil "~a-error.log" tag) :ymd))
-          (let* ((actual-context-files (if context-files
-                                           context-files
-                                           (let ((default-ctx (get-default-context-file)))
-                                             (if default-ctx (list default-ctx) nil))))
-                 (ctx-content (proc-ctx-files actual-context-files)))
-            (when (or (s/nz prompt) input-files context-files)
-              (multiple-value-bind (assembled-prompt success-p)
-                  (build-full-prompt ctx-content input-files prompt)
-                (unless success-p
-                  (format t "~&Failed to assemble initial prompt. Exiting.~%")
-                  (return-from run-chat nil))
-                (unwind-protect
-                     (progn
-                       (format t "~&Sending request to Gemini...~%")
-                       (gem-conv assembled-prompt :model model))
-                  ;; Ensure output stream is closed on exit
-                  (when *run-out-s*
-                    (format t "~&Closing save file: ~a~%" (file-namestring (pathname *run-out-s*)))
-                    (close *run-out-s*)
-                    (setf *run-out-s* nil)))))
-            (format t "~&Exiting.~%"))))))
+(defun run-chat (args &key (model "gemini-2.5-pro"))
+  "Main function to run the chat loop. 'args' is the list of command-line arguments."
+  (unless (chk-args args)
+	(return-from run-chat))
+  (let* ((input-files *input-files*)
+         (context-files *context*)
+         (tag *tag*)
+         (prompt (string-trim '(#\Space #\Tab #\Newline) (format nil "~{~a~^ ~}" *remaining-args*))))
+
+	(with-open-log-files ((:thinking-log (format nil "~a-thinking.log" tag) :ymd)
+                          (:answer-log (format nil "~a-the-answer.log" tag) :ymd)
+                          (:error-log (format nil "~a-error.log" tag) :ymd))
+      (let* ((actual-context-files (if context-files
+                                       context-files
+                                       (let ((default-ctx (get-default-context-file)))
+                                         (if default-ctx (list default-ctx) nil))))
+             (ctx-content (proc-ctx-files actual-context-files)))
+        (when (or (s/nz prompt) input-files context-files)
+          (multiple-value-bind (assembled-prompt success-p)
+              (build-full-prompt ctx-content input-files prompt)
+            (unless success-p
+              (format t "~&Failed to assemble initial prompt. Exiting.~%")
+              (return-from run-chat nil))
+            (unwind-protect
+                 (progn
+                   (format t "~&Sending request to Gemini...~%")
+                   (gem-conv assembled-prompt :model model))
+              ;; Ensure output stream is closed on exit
+              (when *run-out-s*
+                (format t "~&Closing save file: ~a~%" (file-namestring (pathname *run-out-s*)))
+                (close *run-out-s*)
+                (setf *run-out-s* nil)))))
+        (format t "~&Exiting.~%")))))
 
 (defun slime-chat (&key (input-files nil) (context-files nil) (save-file nil) (tag *d-tag*) (model "gemini-2.5-pro") (prompt "") (exit-on-error nil) (keyname "personal"))
   "Starts a chat session from SLIME with the provided options."

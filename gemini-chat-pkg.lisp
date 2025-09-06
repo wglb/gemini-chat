@@ -11,6 +11,6 @@
   (:import-from #:jsown #:to-json #:parse)
   (:import-from #:uiop #:getenv #:slurp-stream-string #:read-file-forms)
   (:export #:run-gemini-conversation
-           #:run-chat
            #:slime-chat
+		   #:top
 		   #:run-chat))
