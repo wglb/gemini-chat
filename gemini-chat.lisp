@@ -98,6 +98,15 @@
 
 (defparameter *remaining-args* nil)
 
+(defun string-identity-parser (s)
+  "A parser function for com.google.flag that simply returns the string itself
+   and a success boolean T. Used for list flags where each element is a string."
+  (let ((full-l nil))
+    (mapc #'(lambda (k)
+              (push k full-l))
+          (s-s s #\,))
+    (values (reverse full-l) t)))
+
 (defun s-s (str delim &key (rem-empty nil))
   "Encapsulates calls to split-sequence. Splits a string by a single character delimiter.
    :rem-empty T will remove empty strings from the result list."
@@ -438,7 +447,8 @@
 		  (t t))))
 
 (defun run-chat (args &key (model "gemini-2.5-pro"))
-  "Main function to run the chat loop. 'args' is the list of command-line arguments."
+  "Main function to run the chat loop. 'args' is the list of command-line arguments. Answer true if appears successful"
+  #+nil (break "start run")
   (unless (chk-args args)
 	(return-from run-chat))
   (let* ((input-files *input-files*)
