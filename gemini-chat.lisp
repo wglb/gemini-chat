@@ -333,6 +333,8 @@
           (let* ((resp-stream (api-req conversation-history :model model))
                  (parsed-json (parse-api-resp resp-stream)))
             (close resp-stream)
+            (when *save*
+                (save-cmd (format nil ":save ~a" *save*)))
             (let ((answer (extract-txt parsed-json)))
               (when (jsown:keyp parsed-json "candidates")
                 (push (make-message-turn "model" (list (make-text-part answer))) conversation-history))
@@ -351,7 +353,7 @@
                        (input-cmd user-input))
 
 					  ((string= command ":save")
-                       (save-cmd user-input))
+                       (save-cmd user-input)) ;; TODO--wrong
 
                       (t
                        (push (make-message-turn "user" (list (make-text-part user-input))) conversation-history)))))))
@@ -362,9 +364,9 @@
           (when *exit-on-error*
             (return)))))))
 
-(defun save-cmd (user-input &key (if-exists :supersede))
+(defun save-cmd (out-to-user &key (if-exists :supersede))
   "Handles the :save command, opening a new file for responses."
-  (let* ((args (s-s user-input #\Space :rem-empty t))
+  (let* ((args (s-s out-to-user #\Space :rem-empty t))
          (file-path (second args)))
     (when (s/z file-path)
       (format t "~&Please specify a file to save to, e.g., :save my-session.log~%")
@@ -415,19 +417,19 @@
 
 (defun show-opts (&key (bad-args nil))
   "Prints the command-line options to the thinking log file, using the flag special variables."
-  (xlg :thinking-log "~&Entering run-chat with flags:" )
-  (xlg :thinking-log "Keyname: ~a" *keyname*)
-  (xlg :thinking-log "Context files: ~a" *context*)
-  (xlg :thinking-log "Save file: ~a" *save*)
-  (xlg :thinking-log "Tag: ~a" *tag*)
-  (xlg :thinking-log "Input files: ~a" *input-files*)
-  (xlg :thinking-log "Help requested: ~a" *help-is*)
-  (xlg :thinking-log "Single shot: ~a" *single-shot*)
-  (xlg :thinking-log "Exit on error: ~a" *exit-on-error*)
-  (xlg :thinking-log "Using model: ~a" "gemini-2.5-pro") ; Model is currently hardcoded in run-chat
-  (xlg :thinking-log "Remaining args: ~a" *remaining-args*)
+  (xlg :option-log "~&Entering run-chat with flags:" )
+  (xlg :option-log "Keyname: ~a" *keyname*)
+  (xlg :option-log "Context files: ~a" *context*)
+  (xlg :option-log "Save file: ~a" *save*)
+  (xlg :option-log "Tag: ~a" *tag*)
+  (xlg :option-log "Input files: ~a" *input-files*)
+  (xlg :option-log "Help requested: ~a" *help-is*)
+  (xlg :option-log "Single shot: ~a" *single-shot*)
+  (xlg :option-log "Exit on error: ~a" *exit-on-error*)
+  (xlg :option-log "Using model: ~a" "gemini-2.5-pro") ; Model is currently hardcoded in run-chat
+  (xlg :option-log "Remaining args: ~a" *remaining-args*)
   (when bad-args
-    (xlg :thinking-log "Unprocessed command-line options: ~s" bad-args)))
+    (xlg :option-log "Unprocessed command-line options: ~s" bad-args)))
 
 (defun chk-args (args)
   (let ((remaining-args (parse-command-line args)))
@@ -449,8 +451,10 @@
 (defun run-chat (args &key (model "gemini-2.5-pro"))
   "Main function to run the chat loop. 'args' is the list of command-line arguments. Answer true if appears successful"
   #+nil (break "start run")
-  (unless (chk-args args)
-	(return-from run-chat))
+  (with-open-log-files ((:option-log "option-log" :ymd))
+    (unless (chk-args args)
+	  (return-from run-chat)))
+  
   (let* ((input-files *input-files*)
          (context-files *context*)
          (tag *tag*)
