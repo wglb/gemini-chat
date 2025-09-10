@@ -1,4 +1,4 @@
-;; test/api-tests.lisp
+;; api-tests.lisp
 (in-package #:gemini-chat-test)
 
 (def-suite api-suite
@@ -6,13 +6,6 @@
   :in gemini-chat-suite)
 
 (in-suite api-suite)
-
-(defun run-tests ()
-  "Runs all tests in the gemini-chat test suite."
-  (let ((result (run! 'gemini-chat-suite)))
-    (if (results-status result)
-        t
-        nil)))
 
 ;; Mock server variables
 (defparameter *mock-api-response* nil
@@ -37,19 +30,37 @@
 (test api-req-success
   "Tests that api-req correctly handles a successful API response."
   (let ((mock-response-json "{\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"This is a mock response.\"}]}}]}")
-        (mock-url (com.google.flag:flag-value '*api-url*))
-        (mock-model "mock-model"))
+        (mock-url "https://generativelanguage.googleapis.com/v1beta/models/")
+        (mock-model "mock-model")
+        (*api-url* "http://mock-api/")) ; Define a local mock API URL
     
     (set-mock-response 200 mock-response-json)
 
     (let ((real-http-request #'drakma:http-request))
-      (flet ((run-mocked-test ()
-               ;; This is where we replace the real function with our mock
-               (setf (fdefinition 'drakma:http-request) #'mock-http-request)
-               (let ((result-stream (gemini-chat:api-req '("some-prompt") :model mock-model)))
-                 (is (string= (slurp-stream-string result-stream) mock-response-json))
-                 ;; Check the captured payload
-                 (is (jsown:to-json *captured-request*))))
-             (unwind-protect (run-mocked-test)
-               ;; Always restore the real function
-               (setf (fdefinition 'drakma:http-request) real-http-request))))))
+      (unwind-protect
+           (progn
+             (setf (fdefinition 'drakma:http-request) #'mock-http-request)
+             (let ((result-stream (gemini-chat:api-req `(,(jsown:new-js
+                                                             ("role" . "user")
+                                                             ("parts" . `(,(jsown:new-js ("text" . "some-prompt"))))))
+                                                        :model mock-model)))
+               (is (string= (uiop:slurp-stream-string result-stream) mock-response-json))
+               (is (jsown:to-json *captured-request*))))
+        (setf (fdefinition 'drakma:http-request) real-http-request)))))
+
+(test api-req-failure
+  "Tests that api-req correctly handles a failed API response."
+  (let ((mock-response-json "{\"error\":{\"code\":400,\"message\":\"Bad Request\"}}")
+        (mock-url "https://generativelanguage.googleapis.com/v1beta/models/")
+        (mock-model "mock-model")
+        (*api-url* "http://mock-api/"))
+    (set-mock-response 400 mock-response-json)
+    (let ((real-http-request #'drakma:http-request))
+      (unwind-protect
+           (progn
+             (setf (fdefinition 'drakma:http-request) #'mock-http-request)
+             (signals error (gemini-chat:api-req `(,(jsown:new-js
+                                                     ("role" . "user")
+                                                     ("parts" . `(,(jsown:new-js ("text" . "some-prompt"))))))
+                                                :model mock-model)))
+        (setf (fdefinition 'drakma:http-request) real-http-request)))))

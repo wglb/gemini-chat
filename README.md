@@ -213,3 +213,12 @@ You would type:
 Based on the report, what were the key revenue drivers and what challenges are highlighted?
 gemini-chat combines the context from my_project_docs.txt and another_doc.txt, the content of quarterly_report.csv, and your "key revenue drivers" prompt, sends it to Gemini, and logs the response to session_log.txt (and displays it to you).
 
+Test Suite
+To run the project's unit tests, use the ASDF test-system command:
+
+(asdf:test-system :gemini-chat-test)
+
+This will run all tests, including those for the file packer and the API request function.
+
+Development
+The project is structured with separate files for the package definition (gemini-chat-pkg.lisp), main logic (gemini-chat.lisp), and system definition (gemini-chat.asd). This promotes a clear separation of concerns.

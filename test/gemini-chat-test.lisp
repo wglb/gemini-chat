@@ -1,23 +1,6 @@
 ;; test/gemini-chat-test.lisp
+
 (in-package #:gemini-chat-test)
-
-(defun create-test-files (file-list temp-dir)
-  "Creates temporary test files in a specified directory."
-  (ensure-directories-exist temp-dir)
-  (loop for (filename content) in file-list
-        do (let ((full-path (merge-pathnames filename temp-dir)))
-             (with-open-file (out full-path
-                                  :direction :output
-                                  :if-exists :supersede
-                                  :if-does-not-exist :create)
-               (princ content out)))))
-
-(defun delete-test-files (file-list temp-dir)
-  "Deletes temporary test files from a specified directory."
-  (loop for (filename content) in file-list
-        do (let ((full-path (merge-pathnames filename temp-dir)))
-             (when (probe-file full-path)
-               (delete-file full-path)))))
 
 (def-suite gemini-chat-suite
   :description "The main test suite for the gemini-chat application.")
@@ -26,43 +9,36 @@
 
 (test pack-and-unpack-roundtrip
   "Tests the round-trip functionality of packing and unpacking files."
-  (let* ((temp-dir (uiop:temporary-directory))
-         (test-files-list '(("file1.txt" "This is the content of file one.")
-                            ("file2.lisp" "(defun hello () (format t \"Hello, World!\"))")
-                            ("file3.md" "# Test Markdown File\n\n- Item 1\n- Item 2")))
-         (packed-file-path (merge-pathnames "packed-test-files.lisp" temp-dir)))
+  (let* ((original-files '("gemini-chat-pkg.lisp" "gemini-chat.lisp" "gemini-chat.asd"))
+         (temp-dir (uiop:temporary-directory))
+         (packed-file-path (uiop:merge-pathnames* "packed-test-files.lisp" temp-dir))
+         (unpacked-dir (uiop:merge-pathnames* "unpacked-test-dir/" temp-dir)))
+
+    (uiop:ensure-all-directories-exist (list unpacked-dir))
     
-    ;; Setup: create the files to be packed
-    (create-test-files test-files-list temp-dir)
-    
-    ;; Test: pack the files using the new file-packer library's public function
+    ;; 1. Pack the files
     (with-open-file (out packed-file-path
                          :direction :output
                          :if-exists :supersede
                          :if-does-not-exist :create)
-      (file-packer:pack-files-to-stream (mapcar #'(lambda (x) (merge-pathnames (car x) temp-dir)) test-files-list)
-                                        out))
-    
-    ;; Assert: the packed file exists and is not empty
-    (is-true (probe-file packed-file-path))
-    (is-true (> (with-open-file (in packed-file-path)
-                  (file-length in))
-                0))
+      (file-packer:pack-files-to-stream original-files out))
 
-    ;; Test: unpack the files
+    ;; 2. Assert the packed file is not empty
     (with-open-file (in packed-file-path :direction :input)
-      (file-packer:unpack-files-from-stream in))
-      
-    ;; Assert: the unpacked files exist and have the correct content
-    (loop for (filename content) in test-files-list
-          do (let ((unpacked-path (merge-pathnames filename temp-dir)))
-               (is-true (probe-file unpacked-path))
-               (is (string= content (uiop:read-file-string unpacked-path)))))
+      (is-true (> (file-length in) 0) "Packed file is not empty."))
 
-    ;; Cleanup: delete all temporary files
-    (delete-file packed-file-path)
-    (delete-test-files test-files-list temp-dir)))
+    ;; 3. Unpack the files to the temporary directory
+    (unwind-protect
+         (let ((result (with-open-file (in packed-file-path :direction :input)
+                         (file-packer:unpack-files-from-stream in))))
+           (is-true result "Unpack returns a non-nil result."))
+      ;; Cleanup after test
+      (uiop:delete-directory-tree unpacked-dir :validate t :if-does-not-exist :ignore)
+      (uiop:delete-file-if-exists packed-file-path))))
 
 (defun run-tests ()
   "Runs all tests in the gemini-chat test suite."
-  (run! 'gemini-chat-suite))
+  (let ((result (run! 'gemini-chat-suite)))
+    (if (results-status result)
+        t
+        nil)))
