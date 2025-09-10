@@ -31,6 +31,12 @@
   :selector "key"
   :default-value "personal")
 
+(define-flag *api-url*
+  :help "URL for gemini api"
+  :type string
+  :selector "api-url"
+  :default-value "https://generativelanguage.googleapis.com/v1beta/models/")
+
 (define-flag *context*
   :help "Path to a context file. Can be specified multiple times. Example: --context file1.txt,file2.txt"
   :type list
@@ -227,7 +233,7 @@
    'model' specifies the Gemini model to use (e.g., \"gemini-2.5-pro\", \"gemini-1.5-flash\").
    Returns the response stream if successful."
   (let* ((api-key (get-key *keyname*))
-         (api-url (format nil "https://generativelanguage.googleapis.com/v1beta/models/~a:generateContent?key=~a" model api-key))
+         (api-url (format nil "~a~a:generateContent?key=~a" *api-url* model api-key))
          (json-payload-lisp-object (make-api-request-payload msgs))
          (json-payload-string (jsown:to-json json-payload-lisp-object))
          (headers '(("Content-Type" . "application/json"))))

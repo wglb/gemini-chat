@@ -1,0 +1,6 @@
+(asdf:load-system :gemini-chat-test)
+(gemini-chat-test:run-tests)
+
+This will run the test and let you know if the packing and unpacking functions work as expected.
+
+Would you like me to create an example of how to run this test suite in a quicklisp or shell environment?
