@@ -451,7 +451,7 @@
 (defun run-chat (args &key (model "gemini-2.5-pro"))
   "Main function to run the chat loop. 'args' is the list of command-line arguments. Answer true if appears successful"
   #+nil (break "start run")
-  (with-open-log-files ((:option-log "option-log" :ymd))
+  (with-open-log-files ((:option-log "option.log" :ymd))
     (unless (chk-args args)
 	  (return-from run-chat)))
   
