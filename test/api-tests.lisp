@@ -32,7 +32,7 @@
   (let ((mock-response-json "{\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"This is a mock response.\"}]}}]}")
         (mock-url "https://generativelanguage.googleapis.com/v1beta/models/")
         (mock-model "mock-model")
-        (*api-url* "http://mock-api/")) ; Define a local mock API URL
+        (*api-url* "http://mock-api/"))
     
     (set-mock-response 200 mock-response-json)
 
