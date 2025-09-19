@@ -6,7 +6,7 @@
   :version "1.0.0"
   :depends-on (#:fiveam
                #:uiop
-               #:file-packer
+               #:file-packer-lib
                #:gemini-chat
                #:jsown)
   :serial t

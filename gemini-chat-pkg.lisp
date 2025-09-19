@@ -6,6 +6,7 @@
         #:com.google.flag
         #:uiop/driver
         #:split-sequence
+		#:file-packer-lib
         #:xlg-lib)
   (:import-from #:drakma #:http-request #:drakma-error)
   (:import-from #:jsown #:to-json #:parse)

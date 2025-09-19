@@ -21,7 +21,7 @@
                          :direction :output
                          :if-exists :supersede
                          :if-does-not-exist :create)
-      (file-packer:pack-files-to-stream original-files out))
+      (pack-files-to-stream original-files out))
 
     ;; 2. Assert the packed file is not empty
     (with-open-file (in packed-file-path :direction :input)
@@ -30,7 +30,7 @@
     ;; 3. Unpack the files to the temporary directory
     (unwind-protect
          (let ((result (with-open-file (in packed-file-path :direction :input)
-                         (file-packer:unpack-files-from-stream in))))
+                         (unpack-files-from-stream in))))
            (is-true result "Unpack returns a non-nil result."))
       ;; Cleanup after test
       (uiop:delete-directory-tree unpacked-dir :validate t :if-does-not-exist :ignore)

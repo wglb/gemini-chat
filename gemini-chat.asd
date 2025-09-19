@@ -9,6 +9,7 @@
                #:cl-ppcre
                #:split-sequence
                #:uiop
+			   #:file-packer-lib
                #:xlg-lib
                #:com.google.flag)
   :defsystem-depends-on ("deploy")

@@ -295,19 +295,20 @@
         (all-files-read-ok t))
     (when input-files
       (dolist (file-path input-files)
-        (if (uiop:file-exists-p file-path)
-            (let ((file-content (uiop:read-file-string file-path)))
+		(let ((native-file-path (uiop:native-namestring file-path)))
+		  (if (uiop:file-exists-p file-path)
+            (let ((file-content (uiop:read-file-string file-path #+nil  (uiop:native-namestring file-path))))
               (push (format nil "===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]==="
-                            (file-namestring file-path)
+                            native-file-path
                             file-content
-                            (file-namestring file-path))
+                            native-file-path)
                     prompt-list))
             (progn
               (setf all-files-read-ok nil)
-              (xlg :error-log "~&Failed to read input file: ~a" file-path)
-              (format t "~&Failed to read input file: ~a~%" file-path)
+              (xlg :error-log "aifp: Failed to read input file: ~a" native-file-path)
+              (format t "aifp: Failed to read input file: ~a~%" native-file-path)
               (if *exit-on-error*
-                  (return-from assemble-input-files-prompt (values nil nil)))))))
+                  (return-from assemble-input-files-prompt (values nil nil))))))))
     (values (format nil "~{~a~%~%~}" (nreverse prompt-list)) all-files-read-ok)))
 
 (defun assemble-user-prompt (prompt)
