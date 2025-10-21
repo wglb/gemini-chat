@@ -4,12 +4,7 @@
   :license  "GPLv3"
   :version "1.4.16"
   :serial t
-  :depends-on (#:drakma
-               #:jsown
-               #:cl-ppcre
-               #:split-sequence
-               #:uiop
-			   #:file-packer-lib
+  :depends-on (#:gemini-chat-lib
                #:xlg-lib
                #:com.google.flag)
   :defsystem-depends-on ("deploy")

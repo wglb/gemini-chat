@@ -1,18 +1,14 @@
 ;;;; gemini-chat-pkg.lisp
 ;;;; This file defines the GEMINI-CHAT package.
 
-(defpackage #:gemini-chat
+(defpackage #:gemini-chat-lib
   (:use #:cl
-        #:com.google.flag
         #:uiop/driver
         #:split-sequence
 		#:file-packer-lib
-        #:xlg-lib
-		#:gemini-chat-lib)
+        #:xlg-lib)
   (:import-from #:drakma #:http-request #:drakma-error)
   (:import-from #:jsown #:to-json #:parse)
   (:import-from #:uiop #:getenv #:slurp-stream-string #:read-file-forms)
-  (:export #:run-gemini-conversation
-           #:slime-chat
-           #:top
-           #:api-req))
+  (:export #:run-chat-with-kw
+		   #:get-key))
