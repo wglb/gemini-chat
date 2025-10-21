@@ -1,0 +1,10 @@
+(role . model))
+(finishReason . STOP) (index . 0)))
+(usageMetadata OBJ (promptTokenCount . 21)
+               (candidatesTokenCount . 328)
+               (totalTokenCount . 1561)
+               (promptTokensDetails
+                (OBJ (modality . TEXT) (tokenCount . 21)))
+               (thoughtsTokenCount . 1212))
+(modelVersion . gemini-2.5-pro)
+(responseId . 5NJuaNyGHKqq1MkP6Ke_mQE))
