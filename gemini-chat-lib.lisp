@@ -137,7 +137,7 @@
   (when (s/nz ctx-content)
     (format nil "--- Context Files --~%~a~%--- End Context Files --~%" ctx-content)))
 
-(defun assemble-input-files-prompt (input-files exit-on-error)
+#+nil (defun assemble-input-files-prompt (input-files exit-on-error)
   "Reads and assembles the content of input files into a prompt section."
   ;; TODO use file-packer. Also make public file-packer github
   (format t "aifp: input ~s exit-on-error ~s" input-files exit-on-error)
@@ -161,6 +161,52 @@
 					(return-from assemble-input-files-prompt (values nil nil))))))))
     (values (format nil "~{~a~%~%~}" (nreverse prompt-list)) all-files-read-ok)))
 
+(defun assemble-input-files-prompt (input-files exit-on-error)
+  "Reads and assembles the content of input files into a prompt section, handling common encoding errors."
+  (format t "aifp: input ~s exit-on-error ~s" input-files exit-on-error)
+  (let ((prompt-list nil)
+        (all-files-read-ok t))
+    (when input-files
+      (dolist (file-path input-files)
+        ;; Define all local variables here to ensure they are visible to the handler-case
+        (let ((native-file-path (uiop:native-namestring file-path))
+              (file-content nil))
+          
+          (handler-case
+              ;; 1. Try reading with the default encoding (usually UTF-8)
+              (if (uiop:file-exists-p file-path)
+                  ;; Use SETF to assign the value to the outer-scoped variable
+                  (setf file-content (uiop:read-file-string file-path))
+                  (setf file-content nil))
+            
+            ;; 2. Catch the specific decoding error (UTF-16LE detected)
+            (sb-int:stream-decoding-error (e) 
+              (declare (ignore e))
+              (format t "aifp: Retrying ~a with :UTF-16LE due to decoding error.~%" native-file-path) 
+              ;; Use SETF for the retry content
+              (setf file-content (uiop:read-file-string file-path :external-format :utf-16le)))
+            
+            ;; 3. Catch all other file errors (FileNotFound, permissions, etc.)
+            (error (c) 
+              (declare (ignore c))
+              (setf all-files-read-ok nil)
+              (xlg :error-log "aifp: Failed to read input file: ~a" native-file-path)
+              (format t "aifp: Failed to read input file: ~a~%" native-file-path)
+              (if exit-on-error
+                  (return-from assemble-input-files-prompt (values nil nil)))
+              ;; Ensure file-content is NIL on unrecoverable error
+              (setf file-content nil)))
+
+          ;; This is the main body where file-content and native-file-path are used
+          (if file-content
+              (push (format nil "===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]==="
+                            native-file-path
+                            file-content
+                            native-file-path)
+                    prompt-list))))
+    (values (format nil "~{~a~%~%~}" (nreverse prompt-list)) all-files-read-ok))))
+
+
 (defun assemble-user-prompt (prompt)
   "Formats the user's initial prompt."
   (when (s/nz prompt)
@@ -170,7 +216,7 @@
   "Constructs the complete prompt by combining all sections."
   (let ((full-prompt-list nil))
     (multiple-value-bind (input-files-string success-p)
-		(assemble-input-files-prompt input-files exit-on-error)
+		 (assemble-input-files-prompt input-files exit-on-error)
       (unless success-p
         (return-from build-full-prompt (values nil nil)))
       (when ctx-content
@@ -277,7 +323,7 @@
 						   (keyname "personal")
 						   (api-url "https://generativelanguage.googleapis.com/v1beta/models/")
 						   (gemini-model "gemini-2.5-pro")
-						   (context-files "context.txt")
+						   (context "context.txt")
 						   (save "")
 						   (tag "chat")
 						   (input-files nil)
@@ -291,16 +337,18 @@
                           (:answer-log (format nil "~a-the-answer.log" tag) :ymd)
                           (:error-log (format nil "~a-error.log" tag) :ymd))
 	  (format t " log files opened~%")
-      (let* ((actual-context-files (if context-files
-                                       context-files
+      (let* ((actual-context-files (if context
+                                       (if (atom context)
+										   (list context)
+										   context)
                                        (let ((default-ctx (get-default-context-file)))
                                          (if default-ctx (list default-ctx) nil))))
              (ctx-content (proc-ctx-files actual-context-files)))
 		(xlg :thinking-log (format nil "actual-context ~s ctx-context ~s" actual-context-files ctx-content ))
-        (when (or (s/nz prompt) input-files context-files)
+        (when (or (s/nz prompt) input-files context)
           (multiple-value-bind (assembled-prompt success-p)
               (build-full-prompt ctx-content input-files prompt exit-on-error)
-			(xlg :thinking-log (format nil "prompt ~s success ~s" assembled-prompt success-p ))
+			(xlg :thinking-log "prompt ~s success ~s" assembled-prompt success-p)
             (unless success-p
               (format t "~&Failed to assemble initial prompt. Exiting.~%")
               (return-from run-chat-with-kw nil))

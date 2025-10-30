@@ -234,7 +234,7 @@
   (run-chat-with-kw :keyname *keyname*
 					:api-url *api-url*
 					:gemini-model *gemini-model*
-					:context-files *context*
+					:context *context*
 					:single-shot *single-shot*
 					:save *save*
 					:tag *tag*
