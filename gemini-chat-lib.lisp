@@ -182,7 +182,7 @@
             ;; 2. Catch the specific decoding error (UTF-16LE detected)
             (sb-int:stream-decoding-error (e) 
               (declare (ignore e))
-              (format t "aifp: Retrying ~a with :UTF-16LE due to decoding error.~%" native-file-path) 
+              (xlg :error-log "aifp: Retrying ~a with :UTF-16LE due to decoding error." native-file-path) 
               ;; Use SETF for the retry content
               (setf file-content (uiop:read-file-string file-path :external-format :utf-16le)))
             
@@ -190,8 +190,7 @@
             (error (c) 
               (declare (ignore c))
               (setf all-files-read-ok nil)
-              (xlg :error-log "aifp: Failed to read input file: ~a" native-file-path)
-              (format t "aifp: Failed to read input file: ~a~%" native-file-path)
+              (xlgt :error-log "aifp: Failed to read input file: ~a" native-file-path)
               (if exit-on-error
                   (return-from assemble-input-files-prompt (values nil nil)))
               ;; Ensure file-content is NIL on unrecoverable error
@@ -263,8 +262,7 @@
                        (push (make-message-turn "user" (list (make-text-part user-input))) conversation-history)))))))
             (when single-shot (return)))
         (error (e)
-          (xlg :error-log "~&An error occurred: ~a~%" e)
-          (format t "~&An error occurred: ~a~%~%" e)
+          (xlgt :error-log "~&An error occurred: ~a~%" e)
           (when exit-on-error
             (return)))))))
 
@@ -287,8 +285,7 @@
           (setf *run-out-s* (open actual-path :direction :output :if-does-not-exist :create :if-exists if-exists))
           (format t "~&Now saving responses to: ~a~%" actual-path))
       (error (c)
-        (xlg :error-log "~&Failed to open file for saving: ~a" c)
-        (format t "~&Failed to open file for saving: ~a~%" c)
+        (xlgt :error-log "~&Failed to open file for saving: ~a" c)
         (setf *run-out-s* nil)))))
 
 (defun input-cmd (user-input)
