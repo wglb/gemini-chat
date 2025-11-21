@@ -109,9 +109,10 @@
 (defun extract-txt (parsed-json)
   "Extracts the generated text from the parsed Gemini API JSON response using jsown accessors. Returns the text string or NIL if not found."
   (cond ((jsown:keyp parsed-json "error")
-         (progn
-           (xlg :thinking-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
-           (xlg :answer-log "~&API returned an error: ~a" (jsown:val parsed-json "error"))
+         (let ((the-err (jsown:val parsed-json "error")))
+           (xlg :thinking-log "~&API returned an error: ~a" the-err)
+           (xlgt :answer-log "~&API returned an error: ~a" the-err)
+		   ;;(break "we gotta error ~s" the-err)
            nil))
         ((jsown:keyp parsed-json "candidates")
          (let* ((candidates (jsown:val parsed-json "candidates"))
@@ -137,74 +138,58 @@
   (when (s/nz ctx-content)
     (format nil "--- Context Files --~%~a~%--- End Context Files --~%" ctx-content)))
 
-#+nil (defun assemble-input-files-prompt (input-files exit-on-error)
-  "Reads and assembles the content of input files into a prompt section."
-  ;; TODO use file-packer. Also make public file-packer github
-  (format t "aifp: input ~s exit-on-error ~s" input-files exit-on-error)
-  (let ((prompt-list nil)
-        (all-files-read-ok t))
-    (when input-files
-      (dolist (file-path input-files)
-		(let ((native-file-path (uiop:native-namestring file-path)))
-		  (if (uiop:file-exists-p file-path)
-              (let ((file-content (uiop:read-file-string file-path #+nil  (uiop:native-namestring file-path))))
-				(push (format nil "===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]==="
-                              native-file-path
-                              file-content
-                              native-file-path)
-                      prompt-list))
-              (progn
-				(setf all-files-read-ok nil)
-				(xlg :error-log "aifp: Failed to read input file: ~a" native-file-path)
-				(format t "aifp: Failed to read input file: ~a~%" native-file-path)
-				(if exit-on-error
-					(return-from assemble-input-files-prompt (values nil nil))))))))
-    (values (format nil "~{~a~%~%~}" (nreverse prompt-list)) all-files-read-ok)))
-
 (defun assemble-input-files-prompt (input-files exit-on-error)
   "Reads and assembles the content of input files into a prompt section, handling common encoding errors."
-  (format t "aifp: input ~s exit-on-error ~s" input-files exit-on-error)
+  (xlgt :thinking-log "aifp: input ~s exit-on-error ~s" input-files exit-on-error)
   (let ((prompt-list nil)
         (all-files-read-ok t))
     (when input-files
       (dolist (file-path input-files)
         ;; Define all local variables here to ensure they are visible to the handler-case
-        (let ((native-file-path (uiop:native-namestring file-path))
-              (file-content nil))
-          
+        ;; FINAL FIX: Use (format nil "~A" file-path) to force the corrupted PATHNAME 
+        ;; object into a safe string, which is then used for all file operations.
+        (let ((native-file-path (uiop:ensure-pathname file-path))
+			  (file-content nil))
           (handler-case
               ;; 1. Try reading with the default encoding (usually UTF-8)
-              (if (uiop:file-exists-p file-path)
+              ;; Use the safe string for file existence check
+              (if (uiop:file-exists-p native-file-path)
                   ;; Use SETF to assign the value to the outer-scoped variable
-                  (setf file-content (uiop:read-file-string file-path))
+          
+                ;; Use the safe string for file reading (default)
+                (setf file-content (uiop:read-file-string native-file-path))
                   (setf file-content nil))
             
             ;; 2. Catch the specific decoding error (UTF-16LE detected)
             (sb-int:stream-decoding-error (e) 
               (declare (ignore e))
+       
               (xlg :error-log "aifp: Retrying ~a with :UTF-16LE due to decoding error." native-file-path) 
-              ;; Use SETF for the retry content
-              (setf file-content (uiop:read-file-string file-path :external-format :utf-16le)))
+              ;;
+              ;; Use the safe string for file reading (retry)
+              (setf file-content (uiop:read-file-string native-file-path :external-format :utf-16le)))
             
+            ;;
             ;; 3. Catch all other file errors (FileNotFound, permissions, etc.)
             (error (c) 
               (declare (ignore c))
               (setf all-files-read-ok nil)
               (xlgt :error-log "aifp: Failed to read input file: ~a" native-file-path)
               (if exit-on-error
-                  (return-from assemble-input-files-prompt (values nil nil)))
+        
+                (return-from assemble-input-files-prompt (values nil nil)))
               ;; Ensure file-content is NIL on unrecoverable error
               (setf file-content nil)))
 
-          ;; This is the main body where file-content and native-file-path are used
+          ;;
           (if file-content
               (push (format nil "===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]==="
                             native-file-path
                             file-content
+    
                             native-file-path)
                     prompt-list))))
     (values (format nil "~{~a~%~%~}" (nreverse prompt-list)) all-files-read-ok))))
-
 
 (defun assemble-user-prompt (prompt)
   "Formats the user's initial prompt."
@@ -237,7 +222,7 @@
                  (parsed-json (parse-api-resp resp-stream)))
             (close resp-stream)
             (when save
-                (save-cmd (format nil ":save ~a" save)))
+              (save-cmd (format nil ":save ~a" save)))
             (let ((answer (extract-txt parsed-json)))
               (when (jsown:keyp parsed-json "candidates")
                 (push (make-message-turn "model" (list (make-text-part answer))) conversation-history))
@@ -262,6 +247,7 @@
                        (push (make-message-turn "user" (list (make-text-part user-input))) conversation-history)))))))
             (when single-shot (return)))
         (error (e)
+		  (break "gem-conf: error ~s" e)
           (xlgt :error-log "~&An error occurred: ~a~%" e)
           (when exit-on-error
             (return)))))))
@@ -274,18 +260,19 @@
       (format t "~&Please specify a file to save to, e.g., :save my-session.log~%")
       (return-from save-cmd))
     (when *run-out-s*
-      (format t "~&Closing previous save file: ~a~%" (file-namestring (pathname *run-out-s*)))
+      (format t "~&gchat: save-cmd: Closing previous save file: ~a~%" (file-namestring (pathname *run-out-s*)))
       (close *run-out-s*)
       (setf *run-out-s* nil))
     (handler-case
-        (let ((actual-path (if (uiop:absolute-pathname-p file-path)
-                               file-path
-                               (uiop:merge-pathnames* file-path (uiop:getcwd)))))
+        (let ((actual-path (uiop:ensure-pathname (if (uiop:absolute-pathname-p file-path)
+													 file-path
+													 (uiop:merge-pathnames* file-path (uiop:getcwd))))))
+		  #+nil (break "actual-path ~s ~s" actual-path file-path)
           (xlg :thinking-log "~&Opening save file: ~a" actual-path)
           (setf *run-out-s* (open actual-path :direction :output :if-does-not-exist :create :if-exists if-exists))
-          (format t "~&Now saving responses to: ~a~%" actual-path))
+          (format t "~&gchat: save-cmd: Now saving responses to: ~a~%" actual-path))
       (error (c)
-        (xlgt :error-log "~&Failed to open file for saving: ~a" c)
+        (xlgt :error-log "~&gchat: save-cmd: Failed to open file for saving: ~a" c)
         (setf *run-out-s* nil)))))
 
 (defun input-cmd (user-input)
@@ -345,9 +332,9 @@
         (when (or (s/nz prompt) input-files context)
           (multiple-value-bind (assembled-prompt success-p)
               (build-full-prompt ctx-content input-files prompt exit-on-error)
-			(xlg :thinking-log "prompt ~s success ~s" assembled-prompt success-p)
+			(xlg :thinking-log "gchat::run-chat-with-kw: prompt ~s success ~s" assembled-prompt success-p)
             (unless success-p
-              (format t "~&Failed to assemble initial prompt. Exiting.~%")
+              (format t "~&gchat::run-chat-with-kw: Failed to assemble initial prompt. Exiting.~%")
               (return-from run-chat-with-kw nil))
             (unwind-protect
                  (progn
@@ -355,7 +342,7 @@
                    (gem-conv assembled-prompt keyname api-url save single-shot exit-on-error :model gemini-model))
               ;; Ensure output stream is closed on exit
               (when *run-out-s*
-                (format t "~&Closing save file: ~a~%" (file-namestring (pathname *run-out-s*)))
+                (format t "~&gchat::run-chat-with-kw: Closing save file: ~a~%" (file-namestring (pathname *run-out-s*)))
                 (close *run-out-s*)
                 (setf *run-out-s* nil)))))
         (format t "~&Exiting.~%")))))
