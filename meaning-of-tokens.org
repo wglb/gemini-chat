@@ -1,0 +1,49 @@
+#+CAPTION: Gemini API Token Usage Definitions
+| Field Name           | Meaning         | Context                                                                    |
+|----------------------+-----------------+----------------------------------------------------------------------------|
+| promptTokenCount     | *Input Tokens*  | This is the total number of tokens sent *to* the model in the request. \\  |
+|                      |                 | For a chat turn, this includes: \\                                         |
+|                      |                 | *1. All previous turns in the conversation history.* \\                    |
+|                      |                 | *2. Your current user prompt.* \\                                          |
+|                      |                 | *3. Any context files, input files, or system instructions.*               |
+| candidatesTokenCount | *Output Tokens* | This is the total number of tokens generated *by* the model as its \\      |
+|                      |                 | final response. This value directly correlates with the length of the \\   |
+|                      |                 | text response you see from Gemini.                                         |
+| totalTokenCount      | *Total Tokens*  | This is the sum of all tokens consumed in the transaction. It is the \\    |
+|                      |                 | sum of *promptTokenCount* and *candidatesTokenCount*, plus any \\          |
+|                      |                 | auxiliary tokens used internally by the model (e.g., thoughtsTokenCount \\ |
+|                      |                 | for some models, though totalTokenCount includes everything).              |
+
+
+#+CAPTION: Granular Token Usage Details (from usageMetadata)
+| Field Name          | Meaning                                           | Significance                                                             |
+|---------------------+---------------------------------------------------+--------------------------------------------------------------------------|
+| promptTokensDetails | **Detailed Input Breakdown**                      | This field is an array that breaks down the *promptTokenCount* \\        |
+|                     | An array of objects showing how many              | by the type of input **modality** (e.g., TEXT, IMAGE, or \\              |
+|                     | tokens were consumed, grouped by                  | VIDEO). \\                                                               |
+|                     | modality (e.g., TEXT, IMAGE, etc.). \\            |                                                                          |
+|                     | (e.g., ~ (modality . TEXT) (tokenCount . 28825)~) | It is especially useful for **multimodal** prompts to see \\             |
+|                     |                                                   | which input type contributes how much to the total prompt size.          |
+| thoughtsTokenCount  | **Internal Reasoning Tokens**                     | This represents tokens consumed by the model's internal \\               |
+|                     | The number of tokens used by the                  | "thinking" or **pre-computation** steps before it generates \\           |
+|                     | model for internal reasoning, planning,           | the final response. \\                                                   |
+|                     | or tool use (like function calling).              | \\                                                                       |
+|                     |                                                   | It is part of the **`totalTokenCount`** but is *separate* from \\        |
+|                     |                                                   | both the input (`promptTokenCount`) and output (`candidatesTokenCount`). |
+
+
+The two counts you need to pay closest attention to for **cost analysis** are **`promptTokenCount`** (Input) and **`candidatesTokenCount`** (Output), as they are typically billed at different rates.
+
+The **`totalTokenCount`** is the final number that represents your total consumption for that request.
+
+Here is a breakdown in your preferred Org-mode list format:
+
+* **Primary Cost Drivers (Charged at specific rates):**
+    * **`promptTokenCount`**: This is the cost for your **input** (the prompt, the entire chat history, context files, etc.). This rate is usually lower per token.
+    * **`candidatesTokenCount`**: This is the cost for the model's **output** (the generated response). This rate is typically higher per token than the input rate.
+* **Auxiliary Cost Driver (Included in the Total):**
+    * **`thoughtsTokenCount`**: While this is a breakdown of internal tokens used for the model's computation, it is an integral part of the overall cost. It contributes directly to the **`totalTokenCount`**.
+* **Final Consumption Meter:**
+    * **`totalTokenCount`**: This number is the authoritative sum of all consumed tokens for the request, representing the *overall meter reading* that determines the final dollar amount charged.
+
+**In short: Track `promptTokenCount` and `candidatesTokenCount` to apply your provider's specific input/output rates, and use `totalTokenCount` to confirm the final consumption for the transaction.**
