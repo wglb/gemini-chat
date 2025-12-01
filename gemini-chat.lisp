@@ -230,7 +230,7 @@
   (with-open-log-files ((:option-log "option.log" :ymd))
 	(unless (chk-args args)
 	  (return-from run-chat)))
-  (format t "wath does save say ~s and single shot ~s~%" *save* *single-shot*)
+  (format t "What does save say ~s and single shot ~s~%" *save* *single-shot*)
   (run-chat-with-kw :keyname *keyname*
 					:api-url *api-url*
 					:gemini-model *gemini-model*
