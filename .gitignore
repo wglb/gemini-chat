@@ -9,3 +9,4 @@ changes-to-assist-file-transfer-first.org
 *.url
 bin
 *.fnd
+*.tkn
