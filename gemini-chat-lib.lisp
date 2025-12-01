@@ -115,12 +115,24 @@ Returns the text string or NIL if not found."
     (when usage-metadata
       (let ((prompt-tokens (jsown:val-safe usage-metadata "promptTokenCount"))
             (candidate-tokens (jsown:val-safe usage-metadata "candidatesTokenCount"))
-            (total-tokens (jsown:val-safe usage-metadata "totalTokenCount")))
-        (xlg :thinking-log "--- Token Usage (Last Response) ---")
-        (xlg :thinking-log "Prompt Tokens: ~a" (or prompt-tokens "N/A"))
-        (xlg :thinking-log "Candidate Tokens: ~a" (or candidate-tokens "N/A"))
-        (xlg :thinking-log "Total Tokens: ~a" (or total-tokens "N/A"))
-        (xlg :thinking-log "-----------------------------------"))))
+            (total-tokens (jsown:val-safe usage-metadata "totalTokenCount"))
+            (thoughts-tokens (jsown:val-safe usage-metadata "thoughtsTokenCount"))
+            (details (jsown:val-safe usage-metadata "promptTokensDetails")))
+        (let ((token-log-data (list
+                               (cons :prompt-token-count (or prompt-tokens "N/A"))
+                               (cons :candidates-token-count (or candidate-tokens "N/A"))
+                               (cons :total-token-count (or total-tokens "N/A"))
+                               (cons :thoughts-token-count (or thoughts-tokens "N/A"))
+                               (cons :prompt-tokens-details (or details "N/A")))))
+          (xlg :thinking-log "--- Token Usage (Last Response) --- ~S" token-log-data)
+          (xlg :token-log "~S" token-log-data)
+          (xlg :thinking-log "-----------------------------------"))
+        #+nil (progn
+                (xlg :thinking-log "--- Token Usage (Last Response) ---")
+                (xlg :thinking-log "Prompt Tokens: ~a" (or prompt-tokens "N/A"))
+                (xlg :thinking-log "Candidate Tokens: ~a" (or candidate-tokens "N/A"))
+                (xlg :thinking-log "Total Tokens: ~a" (or total-tokens "N/A"))
+                (xlg :thinking-log "-----------------------------------")))))
   ;; --- END Token Count Extraction ---
 
   (cond ((jsown:keyp parsed-json "error")
@@ -327,9 +339,10 @@ Returns the text string or NIL if not found."
   
   (let* ((prompt (string-trim '(#\Space #\Tab #\Newline) (format nil "~{~a~^ ~}" remaining-args))))
     (format t "we are opening log files, and prompt is ~s~%" prompt)
-    (with-open-log-files ((:thinking-log (format nil "~a-thinking.log" tag) :ymd)
-                          (:answer-log (format nil "~a-the-answer.log" tag) :ymd)
-                          (:error-log (format nil "~a-error.log" tag) :ymd))
+    (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   tag) :ymd)  
+                          (:answer-log   (format nil "~a-the-answer.log" tag) :ymd)
+                          (:token-log    (format nil "~a-token.tkn"      tag) :ymd)
+                          (:error-log    (format nil "~a-error.log"      tag) :ymd))
       (format t " log files opened~%")
       (let* ((actual-context-files (if context
                                        (if (atom context)
