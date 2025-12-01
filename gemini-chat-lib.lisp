@@ -217,6 +217,32 @@ Returns the text string or NIL if not found."
   (when (s/nz prompt)
     (format nil "My prompt: ~a" prompt)))
 
+
+(defun build-full-prompt (ctx-content input-files prompt exit-on-error)
+  "Constructs the complete prompt by combining all sections."
+  (let ((full-prompt-list nil))
+	(multiple-value-bind (input-files-string success-p)
+		(assemble-input-files-prompt input-files exit-on-error)
+	  (unless success-p
+		(return-from build-full-prompt (values nil nil)))
+	  
+										; *** CHANGES START HERE ***
+	  
+	  (when input-files-string
+		(push input-files-string full-prompt-list)) ; PUSH Input Files FIRST (will be FIRST after reverse)
+	  
+	  (when ctx-content
+		(push (assemble-context-prompt ctx-content) full-prompt-list)) ; PUSH Context SECOND (will be SECOND after reverse)
+	  
+										; *** CHANGES END HERE ***
+	  
+	  (when prompt
+		(push (assemble-user-prompt prompt) full-prompt-list))
+	  (let ((assembled-prompt (format nil "~{~a~%~%~}" (nreverse full-prompt-list))))
+		(xlg :thinking-log "~&########################################Full assembled prompt for Gemini:~%~a~%^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^" assembled-prompt)
+		(values assembled-prompt t)))))
+
+#+nil
 (defun build-full-prompt (ctx-content input-files prompt exit-on-error)
   "Constructs the complete prompt by combining all sections."
   (let ((full-prompt-list nil))
@@ -351,7 +377,8 @@ Returns the text string or NIL if not found."
                                        (let ((default-ctx (get-default-context-file)))
                                          (if default-ctx (list default-ctx) nil))))
              (ctx-content (proc-ctx-files actual-context-files)))
-        (xlg :thinking-log (format nil "actual-context ~s ctx-context ~s" actual-context-files ctx-content ))
+		(break "context full ~s" ctx-content)
+        (xlg :thinking-log (format nil "==================================================actual-context ~s ctx-context ~s~%__________________________________________________" actual-context-files ctx-content ))
         (when (or (s/nz prompt) input-files context)
           (multiple-value-bind (assembled-prompt success-p)
               (build-full-prompt ctx-content input-files prompt exit-on-error)
@@ -368,5 +395,5 @@ Returns the text string or NIL if not found."
                 (format t "~&gchat::run-chat-with-kw: Closing save file: ~a~%" (file-namestring (pathname *run-out-s*)))
                 (close *run-out-s*)
                 (setf *run-out-s* nil))))) ; Closes UNWIND-PROTECT and MULTIPLE-VALUE-BIND
-          ) ; Closes WHEN
+        ) ; Closes WHEN
       (format t "~&Exiting.~%")))) ; Closes LET* (C), WITH-OPEN-LOG-FILES (B), LET* (A), DEFUN
