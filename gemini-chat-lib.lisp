@@ -377,7 +377,6 @@ Returns the text string or NIL if not found."
                                        (let ((default-ctx (get-default-context-file)))
                                          (if default-ctx (list default-ctx) nil))))
              (ctx-content (proc-ctx-files actual-context-files)))
-		(break "context full ~s" ctx-content)
         (xlg :thinking-log (format nil "==================================================actual-context ~s ctx-context ~s~%__________________________________________________" actual-context-files ctx-content ))
         (when (or (s/nz prompt) input-files context)
           (multiple-value-bind (assembled-prompt success-p)
