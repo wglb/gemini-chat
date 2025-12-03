@@ -365,10 +365,10 @@ Returns the text string or NIL if not found."
   
   (let* ((prompt (string-trim '(#\Space #\Tab #\Newline) (format nil "~{~a~^ ~}" remaining-args))))
     (format t "we are opening log files, and prompt is ~s~%" prompt)
-    (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   tag) :ymd)  
-                          (:answer-log   (format nil "~a-the-answer.log" tag) :ymd)
-                          (:token-log    (format nil "~a-token.tkn"      tag) :ymd)
-                          (:error-log    (format nil "~a-error.log"      tag) :ymd))
+    (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   tag) :hms)  
+                          (:answer-log   (format nil "~a-the-answer.log" tag) :hms)
+                          (:token-log    (format nil "~a-token.tkn"      tag) :hms)
+                          (:error-log    (format nil "~a-error.log"      tag) :hms))
       (format t " log files opened~%")
       (let* ((actual-context-files (if context
                                        (if (atom context)
@@ -377,7 +377,7 @@ Returns the text string or NIL if not found."
                                        (let ((default-ctx (get-default-context-file)))
                                          (if default-ctx (list default-ctx) nil))))
              (ctx-content (proc-ctx-files actual-context-files)))
-        (xlg :thinking-log (format nil "==================================================actual-context ~s ctx-context ~s~%__________________________________________________" actual-context-files ctx-content ))
+        (xlg :thinking-log (format nil "==================================================actual-context ~s ctx-context ~s~%__________________________________________________" actual-context-files ctx-content ) :timestamp t)
         (when (or (s/nz prompt) input-files context)
           (multiple-value-bind (assembled-prompt success-p)
               (build-full-prompt ctx-content input-files prompt exit-on-error)
