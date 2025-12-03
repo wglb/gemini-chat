@@ -117,14 +117,17 @@ Returns the text string or NIL if not found."
             (candidate-tokens (jsown:val-safe usage-metadata "candidatesTokenCount"))
             (total-tokens (jsown:val-safe usage-metadata "totalTokenCount"))
             (thoughts-tokens (jsown:val-safe usage-metadata "thoughtsTokenCount"))
-            (details (jsown:val-safe usage-metadata "promptTokensDetails")))
+            (details (jsown:val-safe usage-metadata "promptTokensDetails"))
+            ;; FIX: modelVersion is at the root, so we fetch from parsed-json
+            (model-version (jsown:val-safe parsed-json "modelVersion"))) 
         (let ((token-log-data (list
                                (cons :prompt-token-count (or prompt-tokens "N/A"))
                                (cons :candidates-token-count (or candidate-tokens "N/A"))
                                (cons :total-token-count (or total-tokens "N/A"))
                                (cons :thoughts-token-count (or thoughts-tokens "N/A"))
-                               (cons :prompt-tokens-details (or details "N/A")))))
-          (xlg :thinking-log "--- Token Usage (Last Response) --- ~S" token-log-data)
+                               (cons :prompt-tokens-details (or details "N/A"))
+                               (cons :modelversion (or model-version "N/A")))))
+          (xlg :thinking-log "--- Token Usage (Last Response) ---~%      ~S" token-log-data)
           (xlg :token-log "~S" token-log-data)
           (xlg :thinking-log "-----------------------------------"))
         #+nil (progn
@@ -367,7 +370,7 @@ Returns the text string or NIL if not found."
     (format t "we are opening log files, and prompt is ~s~%" prompt)
     (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   tag) :hms)  
                           (:answer-log   (format nil "~a-the-answer.log" tag) :hms)
-                          (:token-log    (format nil "~a-token.tkn"      tag) :hms)
+                          (:token-log    (format nil "~a-token.tkn"      tag) :ymd)
                           (:error-log    (format nil "~a-error.log"      tag) :hms))
       (format t " log files opened~%")
       (let* ((actual-context-files (if context
