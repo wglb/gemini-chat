@@ -129,13 +129,7 @@ Returns the text string or NIL if not found."
                                (cons :modelversion (or model-version "N/A")))))
           (xlg :thinking-log "--- Token Usage (Last Response) ---~%      ~S" token-log-data)
           (xlg :token-log "~S" token-log-data)
-          (xlg :thinking-log "-----------------------------------"))
-        #+nil (progn
-                (xlg :thinking-log "--- Token Usage (Last Response) ---")
-                (xlg :thinking-log "Prompt Tokens: ~a" (or prompt-tokens "N/A"))
-                (xlg :thinking-log "Candidate Tokens: ~a" (or candidate-tokens "N/A"))
-                (xlg :thinking-log "Total Tokens: ~a" (or total-tokens "N/A"))
-                (xlg :thinking-log "-----------------------------------")))))
+          (xlg :thinking-log "-----------------------------------")))))
   ;; --- END Token Count Extraction ---
 
   (cond ((jsown:keyp parsed-json "error")
