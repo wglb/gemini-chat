@@ -1,0 +1,149 @@
+That is a fantastic question, Bill. You've correctly identified that managing the **`thoughtSignature`** is the critical step for building robust, multi-turn agents.
+
+Since the `thoughtSignature` is a piece of state that must be passed from the previous response back into the next request, your client needs three things: **Extraction**, **Persistence**, and **Inclusion**.
+
+Here is how you would handle the **Extraction** part within your `extract-txt` function, and how the overall flow would change.
+
+-----
+
+## 1\. Extracting the `thoughtSignature`
+
+The `thoughtSignature` is not at the root of the JSON or in `usageMetadata`; it is located within a **`part`** inside the chosen **`candidate`**.
+
+We must modify `extract-txt` to search through all `parts` of the response to find the signature and return it as a second value using Common Lisp's `MULTIPLE-VALUE-BIND`.
+
+### Modified `extract-txt` Function
+
+```lisp
+(defun extract-txt (parsed-json)
+  "Extracts the generated text and the thoughtSignature from the parsed Gemini API JSON response.
+  Returns:
+    1. The generated text string or NIL if not found.
+    2. The thoughtSignature string or NIL if not found."
+
+  ;; --- START Token Count Extraction (Kept for completeness) ---
+  (let ((usage-metadata (jsown:val-safe parsed-json "usageMetadata")))
+    (when usage-metadata
+      (let ((prompt-tokens (jsown:val-safe usage-metadata "promptTokenCount"))
+            (candidate-tokens (jsown:val-safe usage-metadata "candidatesTokenCount"))
+            (total-tokens (jsown:val-safe usage-metadata "totalTokenCount"))
+            (thoughts-tokens (jsown:val-safe usage-metadata "thoughtsTokenCount"))
+            (details (jsown:val-safe usage-metadata "promptTokensDetails"))
+            (model-version (jsown:val-safe parsed-json "modelVersion")))
+        (let ((token-log-data (list
+                               (cons :prompt-token-count (or prompt-tokens "N/A"))
+                               (cons :candidates-token-count (or candidate-tokens "N/A"))
+                               (cons :total-token-count (or total-tokens "N/A"))
+                               (cons :thoughts-token-count (or thoughts-tokens "N/A"))
+                               (cons :prompt-tokens-details (or details "N/A"))
+                               (cons :modelversion (or model-version "N/A")))))
+          (xlg :thinking-log "--- Token Usage (Last Response) ---~%      ~S" token-log-data)
+          (xlg :token-log "~S" token-log-data)
+          (xlg :thinking-log "-----------------------------------")))))
+  ;; --- END Token Count Extraction ---
+
+  (cond ((jsown:keyp parsed-json "error")
+         (let* ((the-err (jsown:val parsed-json "error"))
+                (code (jsown:val-safe the-err "code"))
+                (message (jsown:val-safe the-err "message"))
+                (status (jsown:val-safe the-err "status")))
+           (xlg :thinking-log "~&API Error [~a] ~a: ~a" code status message)
+           (xlgt :answer-log "~&API Error [~a] ~a: ~a" code status message)
+           (values nil nil))) ; Return NIL for both text and signature
+        
+        ((jsown:keyp parsed-json "candidates")
+         (let* ((candidates (jsown:val parsed-json "candidates"))
+                (first-candidate (car candidates))
+                (content (jsown:val first-candidate "content"))
+                (parts (jsown:val content "parts"))
+                (text nil)
+                (thought-signature nil)) ; New local variable for the signature
+
+           ;; Iterate through all parts to find text and the signature
+           (dolist (part parts)
+             (when (jsown:keyp part "text")
+               (setf text (jsown:val part "text")))
+             ;; Extract the signature if it exists in any part
+             (when (jsown:keyp part "thoughtSignature")
+               (setf thought-signature (jsown:val part "thoughtSignature"))))
+           
+           (setf text (string-trim '(#\Space #\Tab #\Newline) text))
+           (xlg :answer-log "~&Raw answer: ~a" text)
+           (format t "~%~a~%" text)
+           (if *run-out-s*
+               (format *run-out-s* "~a~%" text))
+           
+           ;; Return the text and the signature as multiple values
+           (values text thought-signature)))
+        
+        (t
+         (xlg :error-log "~&Unexpected API response format: ~a" parsed-json)
+         (error "Unexpected API response format."))))
+```
+
+-----
+
+## 2\. Persistence and Inclusion Logic
+
+Your function `run-chat-with-kw` calls `gem-conv`. The logic for passing the signature back and forth needs to be implemented inside your conversation state manager, which I assume is part of `gem-conv`.
+
+### A. Persistence (State Management)
+
+You'll need a place to store the signature between calls. Since your current function signature doesn't pass a conversation object, the easiest way to manage state for a single ongoing chat session is with a **global variable** or a **slot in a conversation struct** if you have one.
+
+For example, a global variable:
+
+```lisp
+(defvar *last-thought-signature* nil
+  "Stores the thoughtSignature from the last Gemini API response for use in the next request.")
+```
+
+### B. Inclusion (Sending the Signature Back)
+
+Your `gem-conv` function (wherever it constructs the request JSON) must be modified to check for a non-`NIL` signature and include it in the `contents` list of the new request.
+
+The new request structure must include a new content part for the model's previous response, containing the signature:
+
+```json
+[
+  // ... previous history ...
+  {
+    "role": "model",
+    "parts": [
+      {
+        "thoughtSignature": "<the-signature-blob>" // This is the only part required for agent state
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "parts": [
+      {
+        "text": "The user's new prompt"
+      }
+    ]
+  }
+]
+```
+
+You would modify `gem-conv` to accept a new keyword argument, say `:thought-signature`, and use it when building the conversation history for the next request.
+
+```lisp
+;; Example: New signature persistence in the caller of extract-txt
+(multiple-value-bind (response-text signature)
+    (extract-txt json-response)
+  (when signature
+    (setf *last-thought-signature* signature))
+  response-text)
+
+;; Example: New signature sending logic in gem-conv
+(defun gem-conv (prompt keyname api-url save single-shot exit-on-error &key model thought-signature)
+  ;; ...
+  (let ((contents (list ; Build the contents array
+                    ;; ... Existing history ...
+                    (when thought-signature 
+                      (make-thought-signature-part thought-signature)) ; Helper to create the JSON part
+                    (make-user-prompt-part prompt))))
+    ;; ... send request ...
+    ))
+```

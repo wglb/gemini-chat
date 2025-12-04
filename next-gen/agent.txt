@@ -1,0 +1,11 @@
+That is absolutely correct, Bill.
+
+The **`thoughtSignature`** is one of the most crucial features for building a **robust, multi-step agent** using the Gemini API, especially when leveraging its function-calling capabilities.
+
+The agentic workflow is precisely why this feature was introduced:
+
+1.  **Enables Multi-Step Tasks:** Agents often need to break a single user request into multiple steps (e.g., "Check the weather, then call a booking API if it's sunny"). The signature acts as the "thread" that ties these steps together, allowing the model to remember the initial intent and the results of previous actions across several turns.
+2.  **State Preservation:** An agent is a stateful entity. The `thoughtSignature` is the mechanism that serializes the model's complex internal reasoning **state**. When you pass it back, the model can restore its context and continue its line of thought exactly where it left off, which is necessary for complex decision-making and planning.
+3.  **High-Reliability Tool Use:** For agents that rely on external tools (functions) to act on the world, the signature is mandatory (for certain models like Gemini 3 Pro). If the model generates a `functionCall`, the signature ensures that when you return the `functionResponse`, the model knows exactly *why* it made that call and how to incorporate the result into its ongoing plan.
+
+In short, if you are building an application where the model needs to perform sequential reasoning, conditional logic, or use tools across multiple back-and-forth API calls—the definition of an agent—you **must** handle and pass the `thoughtSignature` back to the API.

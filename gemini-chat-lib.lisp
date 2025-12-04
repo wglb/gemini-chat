@@ -118,8 +118,7 @@ Returns the text string or NIL if not found."
             (total-tokens (jsown:val-safe usage-metadata "totalTokenCount"))
             (thoughts-tokens (jsown:val-safe usage-metadata "thoughtsTokenCount"))
             (details (jsown:val-safe usage-metadata "promptTokensDetails"))
-            ;; FIX: modelVersion is at the root, so we fetch from parsed-json
-            (model-version (jsown:val-safe parsed-json "modelVersion"))) 
+            (model-version (jsown:val-safe parsed-json "modelVersion")))
         (let ((token-log-data (list
                                (cons :prompt-token-count (or prompt-tokens "N/A"))
                                (cons :candidates-token-count (or candidate-tokens "N/A"))
@@ -133,11 +132,19 @@ Returns the text string or NIL if not found."
   ;; --- END Token Count Extraction ---
 
   (cond ((jsown:keyp parsed-json "error")
-         (let ((the-err (jsown:val parsed-json "error")))
-           (xlg :thinking-log "~&API returned an error: ~a" the-err)
-           (xlgt :answer-log "~&API returned an error: ~a" the-err)
-           ;;(break "we gotta error ~s" the-err)
+         ;; Extract detailed error info
+         (let* ((the-err (jsown:val parsed-json "error"))
+                (code (jsown:val-safe the-err "code"))
+                (message (jsown:val-safe the-err "message"))
+                (status (jsown:val-safe the-err "status")))
+           
+           (xlg :thinking-log "~&API Error [~a] ~a: ~a" code status message)
+		   (xlg :error-log "~&API Error [~a] ~a: ~a" code status message)
+           (xlgt :answer-log "~&API Error [~a] ~a: ~a" code status message)
+           
+           ;; Return nil to indicate failure
            nil))
+        
         ((jsown:keyp parsed-json "candidates")
          (let* ((candidates (jsown:val parsed-json "candidates"))
                 (first-candidate (car candidates))

@@ -1,0 +1,26 @@
+That's a good observation, Bill. You're right—if the API is hitting a token limit when processing a large file, a retry won't help, and a 503 (Unavailable) or similar error is the appropriate signal for your clients to recognize and handle as a permanent failure for that input.
+
+***
+
+## The `thoughtSignature` Field
+
+The **`thoughtSignature`** field is a critical mechanism for the **Gemini 3 and 2.5 series** models, especially when they are used for complex, multi-turn interactions. You are seeing a long string because it is an **encrypted, opaque token** that acts as the model's **internal reasoning state** or "save state."
+
+Here is a breakdown of what it is and why it's so large:
+
+### 1. Purpose: Stateful Reasoning
+Previous models were largely stateless, meaning they re-evaluated the entire conversation history for every request. Gemini 3 uses the `thoughtSignature` to transition to a stateful execution model for complex tasks.
+
+* **Context Continuity:** It encapsulates the model's **hidden states and intermediate computation results**. When you send it back in the next request, the model can **resume its chain of thought** from the exact point where it left off, rather than re-computing its context from scratch.
+* **Function Calling:** This is where it becomes **mandatory**. If the model pauses its reasoning to call a function, the signature acts as the "save state" before tool execution. If you omit the signature when sending the function's result back, the API will return a `400` error because the model cannot correctly restore its thinking context to process the function output.
+
+### 2. Why it is "Humongous"
+The signature is a cryptographically secured and **serialized representation** of the model's internal computation trace. It must be long, dense, and unreadable to prevent tampering and ensure the integrity of the model's reasoning process.
+
+### 3. Client Handling Requirement
+
+For your Lisp client that is interacting directly with the API, the key takeaway is that the `thoughtSignature` must be treated as an **opaque blob** that you must **store and return** in subsequent requests exactly as you received it.
+
+* **Do not attempt to parse, compress, or alter** the string.
+* The signature is typically located within the specific `part` of the response content that triggered the pause (e.g., the `functionCall` part) or the final `text` part.
+* For any multi-step workflow, especially those involving tools (Function Calling), you must update your persistence layer to store the signature and include it in the request history for the next turn to ensure high-quality, continuous reasoning.
