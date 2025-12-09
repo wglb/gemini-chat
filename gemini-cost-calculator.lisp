@@ -1,6 +1,9 @@
 (in-package :gemini-cost-calculator)
 
+(declaim (optimize (speed 0) (safety 3) (debug 3) (space 0)))
+
 ;; The pricing data, based on the information provided (standard rates: prompts <= 200k tokens).
+;;
 ;; Prices are in USD per 1,000,000 tokens.
 (defparameter *gemini-pricing*
   '((:gemini-3.0-pro-preview
@@ -15,41 +18,51 @@
   "Standard pricing (USD per 1 Million tokens) for various Gemini models.
    This excludes long-context prompts (> 200k tokens).")
 
-(defun get-pricing-data (model-keyword)
-  "Retrieves the pricing alist for a given model keyword."
-  (cdr (assoc model-keyword *gemini-pricing*)))
+(defun get-pricing-data (model-keyword &optional (pricing-list *gemini-pricing*))
+  "Retrieves the pricing alist for a given model keyword from a specific
+   pricing list, defaulting to *GEMINI-PRICING*."
+  (cdr (assoc model-keyword pricing-list)))
 
 (defun get-cost-per-m (pricing-data cost-type)
   "Retrieves the specific cost (e.g., :input-cost-per-m) from a pricing alist."
   (let ((result (assoc cost-type pricing-data)))
     (if result
-        (cdr result)
+        (second result)
         (error "Cost type ~A not found for model pricing data." cost-type))))
 
 (defun normalize-model-name (model-string)
-  "Converts a model string (e.g., \"gemini-3.0-pro-preview\") into a
-   canonical keyword (e.g., :GEMINI-3.0-PRO-PREVIEW) for map lookup."
-  (cond (model-string
-		 (let ((keyword-string (cl-ppcre:regex-replace-all "-" model-string "_")))
-		   (intern (string-upcase keyword-string) :keyword)))
-		(t (intern (string-upcase "gemini-3-pro-preview")))))
+  "Converts a model string to a canonical keyword for price lookup,
+   handling the 'gemini-3' vs 'gemini-3.0' naming inconsistency."
+  (let ((canonical-string
+          (cond ((string-equal model-string "gemini-3-pro-preview")
+                 "gemini-3.0-pro-preview") ; Map log name to pricing key
+                (model-string
+                 model-string)             ; Use string as is
+                (t
+                 "gemini-3.0-pro-preview")))) ; Use default pricing key
+    (intern (string-upcase canonical-string) :keyword)))
 
 (defun calculate-cost-from-log (log-s-expression &optional (pricing *gemini-pricing*))
   "Reads a single log entry S-expression and calculates the total USD cost.
 
    Expected log-s-expression format:
-   '((:model \"model-id-string\")
-     (:input-tokens number)
-     (:output-tokens number))"
-  (let* ((model-string  (second (assoc :modelversion log-s-expression)))
-         (input-tokens  (second (assoc :input-tokens log-s-expression)))
-         (output-tokens (second (assoc :output-tokens log-s-expression)))
+   '((:PROMPT-TOKEN-COUNT number)
+     (:CANDIDATES-TOKEN-COUNT number)
+     (:MODELVERSION \"model-id-string\"))
+   
+   If :MODELVERSION is missing, it defaults to \"gemini-3-pro-preview\"."
+  (let* ((model-alist (assoc :modelversion log-s-expression))
+         (model-string  (if model-alist
+                            (cdr model-alist)
+                            "gemini-3-pro-preview"))
+         (input-tokens  (cdr (assoc :prompt-token-count log-s-expression)))
+         (output-tokens (cdr (assoc :candidates-token-count log-s-expression)))
          (model-keyword (normalize-model-name model-string)))
 
-    (unless (and model-string input-tokens output-tokens)
-      (error "Invalid log format. Missing :MODEL, :INPUT-TOKENS, or :OUTPUT-TOKENS."))
+    (unless (and input-tokens output-tokens)
+      (error "Invalid log format. Missing :PROMPT-TOKEN-COUNT or :CANDIDATES-TOKEN-COUNT."))
 
-    (let* ((pricing-data (get-pricing-data model-keyword))
+    (let* ((pricing-data (get-pricing-data model-keyword pricing))
            (input-cost-m (get-cost-per-m pricing-data :input-cost-per-m))
            (output-cost-m (get-cost-per-m pricing-data :output-cost-per-m))
            (token-multiplier 1000000.0)
@@ -77,10 +90,84 @@
   (format t "~&-----------------------~%")
   (values))
 
-;; Example usage:
-#+nil
-(let* ((sample-log '((:model "gemini-3.0-pro-preview")
-                     (:input-tokens 5280)
-                     (:output-tokens 932)))
-       (costs (multiple-value-list (calculate-cost-from-log sample-log))))
-  (apply 'print-cost-report costs))
+(defun process-log-file-forms (log-forms &optional (pricing *gemini-pricing*))
+  "Calculates the total cost and token counts for a list of log S-expressions
+   and prints an aggregated report."
+  (let ((total-cost 0.0)
+        (total-input-tokens 0)
+        (total-output-tokens 0)
+        (model-name "Mixed or N/A"))
+    
+    (loop for log-entry in log-forms do
+      (multiple-value-bind (entry-total-cost input-cost output-cost model input-tokens output-tokens)
+          (calculate-cost-from-log log-entry pricing)
+        (declare (ignore input-cost output-cost))
+        
+        (incf total-cost entry-total-cost)
+        (incf total-input-tokens input-tokens)
+        (incf total-output-tokens output-tokens)
+        
+        (when (string-equal model "gemini-3-pro-preview")
+          (setf model-name model))))
+
+    (let* ((model-keyword (normalize-model-name model-name))
+           (pricing-data (get-pricing-data model-keyword pricing))
+           (input-cost-m (get-cost-per-m pricing-data :input-cost-per-m))
+           (output-cost-m (get-cost-per-m pricing-data :output-cost-per-m))
+           (token-multiplier 1000000.0)
+           (final-input-cost (* (/ total-input-tokens token-multiplier) input-cost-m))
+           (final-output-cost (* (/ total-output-tokens token-multiplier) output-cost-m)))
+
+      ;; Print the aggregated report
+      (format t "~&=== Aggregated API Cost Report ===")
+      (format t "~&Model(s) Used: ~A" model-name)
+      (format t "~&Total Input Tokens: ~:D" total-input-tokens)
+      (format t "~&Total Output Tokens: ~:D" total-output-tokens)
+      (format t "~&----------------------------------")
+      (format t "~&Total Input Cost:  $~8,6F" final-input-cost)
+      (format t "~&Total Output Cost: $~8,6F" final-output-cost)
+      (format t "~&Total Grand Cost:  $~8,6F" total-cost)
+      (format t "~&==================================~%")
+
+      ;; Return the aggregated values
+      (values total-cost total-input-tokens total-output-tokens model-name))))
+
+(defun process-all-tokens-in-directory (directory-path &optional (pricing *gemini-pricing*))
+  "Reads all *.tkn files in the specified directory, aggregates their contents,
+   and calculates the total cost for the project."
+  (let ((all-forms nil))
+    
+    (format t "~&Searching for *.tkn files in: ~A" directory-path)
+    
+    ;; Use UIOP to find all files ending in .tkn within the directory
+    (loop for file in (uiop:directory-files directory-path "*.tkn") do
+      (format t "~&  Found and reading file: ~A" (file-namestring file))
+      
+      ;; Read forms from the current file and append them to the list efficiently
+      (handler-case
+          (setf all-forms (nconc all-forms (uiop:read-file-forms file)))
+        (error (e)
+          (format *error-output* "~&Error reading forms from ~A: ~A~%" 
+                  (file-namestring file) e))))
+    
+    (if all-forms
+        (process-log-file-forms all-forms pricing) ; THEN branch
+        (progn ; CORRECTED: Use PROGN for multiple ELSE forms
+          (format t "~&No *.tkn files found in ~A. Total cost is $0.00.~%" directory-path)
+          (values 0.0 0 0 "N/A")))))
+
+
+
+(defun top ()
+  (let* ((argd sb-ext:*posix-argv*)
+		 (arg (if argd
+				  "."
+				  argd)))
+	(process-all-tokens-in-directory arg)))
+
+(defun save-core ()
+  (sb-ext:save-lisp-and-die "gemini-cost-calculator"
+                            :toplevel #'top
+                            :save-runtime-options t
+                            :executable t
+                            :compression t))
