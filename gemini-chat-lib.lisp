@@ -147,20 +147,53 @@ Returns the text string or NIL if not found."
         
         ((jsown:keyp parsed-json "candidates")
          (let* ((candidates (jsown:val parsed-json "candidates"))
-                (first-candidate (car candidates))
-                (content (jsown:val first-candidate "content"))
-                (parts (jsown:val content "parts"))
-                (first-part (car parts))
-                (text (jsown:val first-part "text")))
-           (xlg :answer-log "~&Raw answer: ~a" text)
-           (setf text (string-trim '(#\Space #\Tab #\Newline) text))
-           (format t "~%~a~%" text)
-           (if *run-out-s*
-               (format *run-out-s* "~a~%" text))
-           text))
-        (t
-         (xlg :error-log "~&Unexpected API response format: ~a" parsed-json)
-         (error "Unexpected API response format."))))
+                (first-candidate (car candidates)))
+
+           ;; --- Robust Key Checking ---
+           ;; Use nested IF statements and jsown:val-safe to check for the presence of the nested keys 
+           ;; (content, parts, text) before attempting to access them.
+           (if first-candidate
+               (let ((content (jsown:val-safe first-candidate "content")))
+                 (if content
+                     (let ((parts (jsown:val-safe content "parts")))
+                       (if parts
+                           (let* ((first-part (car parts))
+                                  (text (if first-part (jsown:val-safe first-part "text"))))
+                             
+                             (if text
+                                 (progn
+                                   (xlg :answer-log "~&Raw answer: ~a" text)
+                                   (setf text (string-trim '(#\Space #\Tab #\Newline) text))
+                                   (format t "~%~a~%" text)
+                                   (if *run-out-s*
+                                       (format *run-out-s* "~%~a~%" text))
+                                   text)
+                                 ;; Failure: Missing 'text' key
+                                 (progn
+                                   (xlg :thinking-log "~&Warning: Content found, but 'text' key missing in parts. JSON: ~S" parsed-json)
+                                   (xlgt :error-log "~&Warning: Content found, but 'text' key missing in parts. JSON: ~S" parsed-json)
+                                   nil)))
+                           ;; Failure: Missing 'parts' key
+                           (progn
+                             (xlg :thinking-log "~&Warning: 'content' found, but 'parts' key missing. JSON: ~S" parsed-json)
+                             (xlgt :error-log "~&Warning: 'content' found, but 'parts' key missing. JSON: ~S" parsed-json)
+                             nil)))
+                     ;; Failure: Missing 'content' key
+                     (progn
+                       (xlg :thinking-log "~&Warning: Candidate found, but 'content' key missing. JSON: ~S" parsed-json)
+                       (xlgt :error-log "~&Warning: Candidate found, but 'content' key missing. JSON: ~S" parsed-json)
+                       nil)))
+               ;; Failure: Empty 'candidates' list
+               (progn
+                 (xlg :thinking-log "~&Warning: 'candidates' key found, but list is empty. JSON: ~S" parsed-json)
+                 (xlgt :error-log "~&Warning: 'candidates' key found, but list is empty. JSON: ~S" parsed-json)
+                 nil))))
+
+        (t 
+         ;; Handles the case where 'error' and 'candidates' keys are both missing (e.g., empty object or unexpected format)
+         (xlg :thinking-log "~&API Response missing 'candidates' and 'error' keys. JSON: ~S" parsed-json)
+         (xlgt :error-log "~&API Response missing 'candidates' and 'error' keys. JSON: ~S" parsed-json)
+         nil)))
 
 ;; --- Primitives for Prompt Assembly ---
 
@@ -265,6 +298,41 @@ Returns the text string or NIL if not found."
         (values assembled-prompt t)))))
 
 (defun gem-conv (initial-prompt keyname api-url-arg save single-shot exit-on-error &key (model "gemini-2.5-pro"))
+  "Handles a single conversation turn with Gemini. 'initial-prompt' is the first message."
+  (declare (ignorable exit-on-error))
+  (let ((conversation-history (list (make-message-turn "user" (list (make-text-part initial-prompt))))))
+    (loop
+	  (let* ((resp-stream (api-req conversation-history keyname api-url-arg :model model))
+             (parsed-json (parse-api-resp resp-stream)))
+        (close resp-stream)
+        (when save
+          (save-cmd (format nil ":save ~a" save)))
+        (let ((answer (extract-txt parsed-json)))
+          (when (jsown:keyp parsed-json "candidates")
+            (push (make-message-turn "model" (list (make-text-part answer))) conversation-history))
+          (unless (or (string= answer "quit") (string= answer ":quit") single-shot)
+            (format t "~&Single shot is ~s>> " single-shot)
+            (finish-output)
+            (let ((user-input (read-line)))
+              (when (or (string= user-input "quit") (string= user-input ":quit"))
+                (return))
+              (let ((command (if (s/nz user-input)
+                                 (string-trim '(#\Space #\Tab)
+                                              (car (s-s user-input #\Space :rem-empty nil)))
+                                 "")))
+                (cond
+                  ((string= command ":input")
+                   (input-cmd user-input))
+                  
+                  ;; FIX: Correctly calls save-cmd with user-input string
+                  ((string= command ":save")
+                   (save-cmd user-input)) 
+                  
+                  (t
+                   (push (make-message-turn "user" (list (make-text-part user-input))) conversation-history)))))))
+        (when single-shot (return))))))
+
+(defun gem-conv-with-case (initial-prompt keyname api-url-arg save single-shot exit-on-error &key (model "gemini-2.5-pro"))
   "Handles a single conversation turn with Gemini. 'initial-prompt' is the first message."
   (let ((conversation-history (list (make-message-turn "user" (list (make-text-part initial-prompt))))))
     (loop
