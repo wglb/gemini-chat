@@ -1,10 +1,10 @@
 ;;; gemini-client.lisp
-;;; A secure, open-source Common Lisp client for the Gemini API using IAM Service Accounts.
+;;; A secure, open-source Common Lisp client for the Gemini API using IAM Service Accounts and Static Keys.
 ;;;
 ;;; Author: wgl@ciex-security.com (Based on user preference)
 ;;; Copyright: 2025 (Based on user preference)
 
-(in-package #:gemini-chat-lib) ; Added based on your latest instruction
+(in-package #:gemini-chat-lib)
 
 ;; https://gemini.google.com/app/2986662dc6d3bc35
 
@@ -20,8 +20,12 @@
 ;; Stores the Service Account Private Key info loaded from the JSON file
 (defvar *iam-credentials* nil)
 
-;; Stores the dynamic access token and its expiration time
+;; Stores the dynamic access token and its expiration time (IAM flow)
 (defvar *access-token-info* '(:token nil :expires-at 0))
+
+;; New: Stores a static API key (for simpler, but less secure, authentication)
+(defvar *static-api-key* nil
+  "Stores a static Gemini API Key for direct authentication, bypassing the IAM flow.")
 
 ;; --- Core Authentication Functions (IAM/OAuth 2.0 Flow) ---
 
@@ -29,17 +33,14 @@
   "Loads the Google Service Account JSON key file into *iam-credentials* using jsown:parse."
   (setf *iam-credentials* (with-open-file (s service-account-json-path)
                             (jsown:parse s)))
-  ;; FIX: Corrected logging to use XLG :THINKING-LOG with format string
   (xlg :thinking-log "Loaded IAM credentials from ~a." service-account-json-path)
   (values))
 
 (defun generate-jwt-assertion ()
   "Creates and signs a JSON Web Token (JWT) assertion using the JOSE library."
-  ;; Helper function to convert alists (used for JSON structures) to plists (used by JOSE positional arguments)
   (flet ((alist-to-plist (alist)
            (let ((plist nil))
              (dolist (pair alist (nreverse plist))
-               ;; Converts the key string to a Lisp keyword symbol
                (push (cdr pair) plist)
                (push (intern (string-upcase (car pair)) :keyword) plist)))))
     
@@ -47,33 +48,24 @@
            (client-email (jsown:val *iam-credentials* "client_email"))
            (scope "https://www.googleapis.com/auth/cloud-platform")
            (now (get-universal-time))
-           
            (private-key (ssh-keys:parse-private-key private-key-pem)) 
            
-           ;; Define claims payload as alist
            (claims-alist `(("iss" . ,client-email)
                            ("scope" . ,scope)
                            ("aud" . ,*auth-endpoint*)
                            ("exp" . ,(+ now 3600)) ; Expires in 1 hour
                            ("iat" . ,now)))
-           
-           ;; Convert to plist for JOSE:ENCODE positional call
            (claims-plist (alist-to-plist claims-alist)))
            
-      ;; FIX: Corrected logging to use XLG :THINKING-LOG with format string
       (xlg :thinking-log "Signing JWT assertion for Service Account: ~a" client-email)
-
-      ;; FIX: Use the standard 3-argument JWS/JWT encoding function.
-      ;; This removes the invalid keyword argument :PROTECTED.
+      ;; Use the standard 3-argument JWS/JWT encoding function.
       (jose:encode :rs256 private-key claims-plist))))
 
-(defun get-fresh-access-token ()
+(defun get-fresh-bearer-token ()
   "Executes the JWT assertion grant flow to obtain a fresh Bearer token."
   (let* ((assertion (generate-jwt-assertion))
-         ;; FIX: The assertion is already URL-safe. Removed erroneous DRAKMA:URL-ENCODE call.
          (payload (format nil "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=~a"
                           assertion))
-         ;; Drakma POSTs the assertion to the token endpoint
          (response (drakma:http-request *auth-endpoint*
                                         :method :post
                                         :content payload
@@ -84,26 +76,59 @@
       (setf (getf *access-token-info* :token) access-token)
       ;; Set expiration time a bit early (10 minutes buffer) to ensure refresh
       (setf (getf *access-token-info* :expires-at) (- (+ (get-universal-time) expires-in) 600))
-      ;; FIX: Corrected logging to use XLG :THINKING-LOG with format string
       (xlg :thinking-log "Successfully retrieved new access token, expires in ~a seconds." expires-in)
       access-token)))
 
-(defun get-current-access-token ()
-  "Returns the cached token, refreshing it if it's expired or nil."
+(defun get-bearer-token ()
+  "Returns the cached Bearer token, refreshing it if it's expired or nil."
   (let ((token (getf *access-token-info* :token))
         (expires-at (getf *access-token-info* :expires-at)))
     (if (or (null token) (< expires-at (get-universal-time)))
-        (get-fresh-access-token)
+        (get-fresh-bearer-token)
         token)))
+
+(defun get-auth-info ()
+  "Determines the active authentication method and returns the necessary info."
+  (cond
+    ;; Priority 1: Use the static API key if set.
+    (*static-api-key*
+     (xlg :thinking-log "Using static API key.")
+     (list :type :static-key :value *static-api-key*))
+    
+    ;; Priority 2: Use the IAM Bearer token if credentials are loaded.
+    (*iam-credentials*
+     (let ((token (get-bearer-token))) 
+       (xlg :thinking-log "Using IAM Bearer token.")
+       (list :type :bearer-token :value token)))
+
+    ;; Fallback: No authentication info.
+    (t
+     (xlg :thinking-log "Warning: No authentication method configured.")
+     nil)))
+
 
 ;; --- Core API Request Function ---
 
 (defun do-api-request (uri-parts &key (payload nil) (method :get) (user-pwd-base nil))
-  "Perform api call using the secure Bearer token. This is the new 'do-api' logic."
-  (declare (ignorable user-pwd-base)) ; Ignores unused Basic Auth parameter from original
-  (let ((token (get-current-access-token)))
-    ;; FIX: Corrected logging to use XLG :THINKING-LOG with format string
-    (xlg :thinking-log "do-api: uri-parts ~a method ~a" uri-parts method)
+  "Perform api call using either the secure Bearer token or a static API key."
+  (declare (ignorable user-pwd-base))
+  (let* ((auth-info (get-auth-info))
+         ;; Initialize headers with the required Accept type
+         (headers (acons "Accept" "application/json" nil)))
+
+    (cond
+      ((eq (getf auth-info :type) :static-key)
+       ;; Use the API Key header for static key authentication
+       (setf headers (acons "x-goog-api-key" (getf auth-info :value) headers)))
+      
+      ((eq (getf auth-info :type) :bearer-token)
+       ;; Use the Authorization header for JWT/Bearer token authentication
+       (let ((token (getf auth-info :value)))
+         (setf headers (acons "Authorization" (concatenate 'string "Bearer " token) headers))))
+      
+      (t
+       (xlg :thinking-log "No authentication information available for API request.")))
+
     (multiple-value-bind (bbody status-code headers uri-back http-stream must-close status-text)
         (drakma:http-request
          (concatenate 'string *gemini-endpoint* "/" uri-parts)
@@ -112,28 +137,25 @@
          :user-agent *user-agent*
          :content payload
          :content-type "application/json"
-         ;; CRITICAL: Uses Authorization: Bearer <token> instead of Basic <b64>
-         :additional-headers (acons "Authorization" (concatenate 'string "Bearer " token)
-                                    (acons "Accept" "application/json" nil)))
+         :additional-headers headers) ; Use the dynamically constructed headers
       (declare (ignorable bbody status-code headers uri-back http-stream must-close status-text))
       (let ((body (cond ((stringp bbody) bbody)
                         (t (map 'string #'code-char bbody))))
             (our-json nil))
         (if (string= (cdr (assoc :content-type headers)) "application/json")
-            (setf our-json (jsown:parse body))) ; Uses jsown:parse
+            (setf our-json (jsown:parse body)))
 
-        ;; FIX: Corrected logging to use XLGT :THINKING-LOG with format string
         (xlgt :thinking-log "Status: ~a" status-code)
         (list our-json body status-code headers uri-back http-stream must-close status-text)))))
 
 ;; --- Example Usage (Gemini/AI endpoint) ---
 
 (defun make-gemini-payload-alist (prompt)
-  "Creates the Lisp alist structure for the Gemini API request body using jsown's format. This is a helper function to prevent compiler parsing errors."
+  "Creates the Lisp alist structure for the Gemini API request body using jsown's format."
   `(:obj
-    ("contents" . ,(list ; The list for the "contents" array
-                    `(:obj ; The first object in the contents array
-                      ("parts" . ,(list ; The list for the "parts" array
+    ("contents" . ,(list 
+                    `(:obj 
+                      ("parts" . ,(list 
                                    `(:obj ("text" . ,prompt)))))))))
 
 (defun call-gemini-model (model-name prompt)
