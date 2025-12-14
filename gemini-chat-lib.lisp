@@ -103,7 +103,7 @@
         (xlg :thinking-log "~&Raw JSON string received:~% ~a" pjs)
         pjs)
     (error (c)
-      (xlg :error-log "~&Failed to parse JSON response: ~a" c)
+      (xlgt :error-log "~&Failed to parse JSON response: ~a" c)
       (error "Failed to parse JSON response: ~a" c))))
 
 (defun extract-txt (parsed-json)
@@ -139,7 +139,7 @@ Returns the text string or NIL if not found."
                 (status (jsown:val-safe the-err "status")))
            
            (xlg :thinking-log "~&API Error [~a] ~a: ~a" code status message)
-		   (xlg :error-log "~&API Error [~a] ~a: ~a" code status message)
+		   (xlgt :error-log "~&API Error [~a] ~a: ~a" code status message)
            (xlgt :answer-log "~&API Error [~a] ~a: ~a" code status message)
            
            ;; Return nil to indicate failure
@@ -204,7 +204,7 @@ Returns the text string or NIL if not found."
 
 (defun assemble-input-files-prompt (input-files exit-on-error)
   "Reads and assembles the content of input files into a prompt section, handling common encoding errors."
-  (xlgt :thinking-log "aifp: input ~s exit-on-error ~s" input-files exit-on-error)
+  (xlg :thinking-log "aifp: input ~s exit-on-error ~s" input-files exit-on-error)
   (let ((prompt-list nil)
         (all-files-read-ok t))
     (when input-files
@@ -262,20 +262,14 @@ Returns the text string or NIL if not found."
 		(assemble-input-files-prompt input-files exit-on-error)
 	  (unless success-p
 		(return-from build-full-prompt (values nil nil)))
-	  
-										; *** CHANGES START HERE ***
-	  
 	  (when input-files-string
 		(push input-files-string full-prompt-list)) ; PUSH Input Files FIRST (will be FIRST after reverse)
-	  
 	  (when ctx-content
 		(push (assemble-context-prompt ctx-content) full-prompt-list)) ; PUSH Context SECOND (will be SECOND after reverse)
-	  
-										; *** CHANGES END HERE ***
-	  
 	  (when prompt
 		(push (assemble-user-prompt prompt) full-prompt-list))
 	  (let ((assembled-prompt (format nil "~{~a~%~%~}" (nreverse full-prompt-list))))
+		(xlg :thinking-log "size of assembled-prompt ~s" (length assembled-prompt))
 		(xlg :thinking-log "~&########################################Full assembled prompt for Gemini:~%~a~%^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^" assembled-prompt)
 		(values assembled-prompt t)))))
 
