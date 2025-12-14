@@ -141,8 +141,12 @@
       (declare (ignorable bbody status-code headers uri-back http-stream must-close status-text))
       (let ((body (cond ((stringp bbody) bbody)
                         (t (map 'string #'code-char bbody))))
-            (our-json nil))
-        (if (string= (cdr (assoc :content-type headers)) "application/json")
+            (our-json nil)
+            (content-type (cdr (assoc :content-type headers))))
+        
+        ;; FIX: Use SEARCH to find "application/json" within the header value,
+        ;; allowing for parameters like "; charset=utf-8".
+        (if (and content-type (search "application/json" content-type :test #'char-equal))
             (setf our-json (jsown:parse body)))
 
         (xlgt :thinking-log "Status: ~a" status-code)
@@ -163,5 +167,19 @@
   (let* ((uri-parts (format nil "models/~a:generateContent" model-name))
          (payload-alist (make-gemini-payload-alist prompt))
          (payload (jsown:to-json payload-alist))
-         (result (do-api-request uri-parts :payload payload :method :post)))
-    (jsown:val (first result) "candidates")))
+         (result (do-api-request uri-parts :payload payload :method :post))
+         (json (first result)) ; The parsed JSON object (or NIL if parsing failed/no JSON)
+         (body (second result)) ; The raw response body
+         (status-code (third result))) ; The HTTP status code
+    
+    ;; Error handling: Check for API errors (400 or higher) first
+    (if (>= status-code 400)
+        (error "Gemini API Request Failed (Status ~a). Check your API Key or Service Account setup. Response body: ~%~a" 
+               status-code 
+               body)
+        
+        ;; Success (2xx status code)
+        (if json
+            (jsown:val json "candidates") ; Attempt to extract candidates
+            ;; This is the error path you hit, now fixed by header search
+            (error "Gemini API Request Succeeded (Status ~a), but returned no parsable JSON body." status-code)))))
