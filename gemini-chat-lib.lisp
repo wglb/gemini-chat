@@ -428,6 +428,8 @@ Returns the text string or NIL if not found."
                            (exit-on-error nil)
                            (single-shot nil)
                            (remaining-args nil))
+  (if (plusp (length keyname))
+	  (setf *static-api-key* (get-key keyname)))
   
   (let* ((prompt (string-trim '(#\Space #\Tab #\Newline) (format nil "~{~a~^ ~}" remaining-args))))
     (format t "we are opening log files, and prompt is ~s~%" prompt)
@@ -459,6 +461,5 @@ Returns the text string or NIL if not found."
               (when *run-out-s*
                 (format t "~&gchat::run-chat-with-kw: Closing save file: ~a~%" (file-namestring (pathname *run-out-s*)))
                 (close *run-out-s*)
-                (setf *run-out-s* nil))))) ; Closes UNWIND-PROTECT and MULTIPLE-VALUE-BIND
-        ) ; Closes WHEN
+                (setf *run-out-s* nil))))))
       (format t "~&Exiting.~%")))) ; Closes LET* (C), WITH-OPEN-LOG-FILES (B), LET* (A), DEFUN
