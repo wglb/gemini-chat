@@ -56,9 +56,11 @@
                             (cdr model-alist)
                             "gemini-3-pro-preview"))
          (input-tokens  (cdr (assoc :prompt-token-count log-s-expression)))
-         (output-tokens (cdr (assoc :candidates-token-count log-s-expression)))
+         (output-tokensr (cdr (assoc :candidates-token-count log-s-expression)))
+		 (output-tokens (if (stringp output-tokensr)
+						   0
+						   output-tokensr))
          (model-keyword (normalize-model-name model-string)))
-
     (unless (and input-tokens output-tokens)
       (error "Invalid log format. Missing :PROMPT-TOKEN-COUNT or :CANDIDATES-TOKEN-COUNT."))
 
@@ -69,7 +71,6 @@
            (input-cost (* (/ input-tokens token-multiplier) input-cost-m))
            (output-cost (* (/ output-tokens token-multiplier) output-cost-m))
            (total-cost (+ input-cost output-cost)))
-
       (values total-cost
               input-cost
               output-cost
