@@ -118,7 +118,7 @@
   (let* ((auth-info (get-auth-info))
          (headers (acons "Accept" "application/json" nil))
          (retries 0)
-         (max-retries 5) ; Set a maximum number of retries
+         (max-retries 5) ; Set a maximum number of retries ;; TODO This needs to be a -kw option
          (uri (concatenate 'string *gemini-endpoint* "/" uri-parts)))
 
     ;; Authentication setup (remains outside the retry loop)
@@ -153,10 +153,12 @@
               (content-type (cdr (assoc :content-type headers))))
           
           (xlgt :thinking-log "Status: ~a (Attempt ~a)" status-code (1+ retries))
+		  (xlg :thinking-log "Body ~s" body)
 
           (cond
             ;; 429: Too Many Requests - Trigger Backoff/Retry
             ((= status-code 429)
+			 
              (when (>= retries max-retries)
                (error "API Quota exceeded after ~a retries. Giving up. Response body: ~%~a" 
                       max-retries body))
@@ -165,7 +167,7 @@
              ;; Wait time = 2^retries seconds + random jitter
              (let ((wait-time (+ (expt 2 retries) (random 1.0))))
                (xlgt :error-log "Quota Exceeded (429). Retrying in ~a seconds (~a/~a)." 
-                    (round wait-time) retries max-retries)
+                     (round wait-time) retries max-retries)
 			   (xlg :thinking-log "Quota Exceeded (429). Retrying in ~a seconds (~a/~a)." 
                     (round wait-time) retries max-retries)
 			   
