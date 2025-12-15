@@ -109,9 +109,8 @@
 
 ;; --- Core API Request Function ---
 
-(defun do-api-request (uri-parts &key (payload nil) (method :get) (user-pwd-base nil))
+(defun do-api-request (uri-parts payload method)
   "Perform api call using either the secure Bearer token or a static API key."
-  (declare (ignorable user-pwd-base))
   (let* ((auth-info (get-auth-info))
          ;; Initialize headers with the required Accept type
          (headers (acons "Accept" "application/json" nil)))
@@ -160,14 +159,14 @@
     ("contents" . ,(list 
                     `(:obj 
                       ("parts" . ,(list 
-                                   `(:obj ("text" . ,prompt)))))))))
+								   `(:obj ("text" . ,prompt)))))))))
 
 (defun call-gemini-model (model-name prompt)
   "Sends a request to the Gemini generateContent endpoint (e.g., gemini-3-pro-preview)."
   (let* ((uri-parts (format nil "models/~a:generateContent" model-name))
          (payload-alist (make-gemini-payload-alist prompt))
          (payload (jsown:to-json payload-alist))
-         (result (do-api-request uri-parts :payload payload :method :post))
+         (result (do-api-request uri-parts payload :post)) ; <-- MODIFIED
          (json (first result)) ; The parsed JSON object (or NIL if parsing failed/no JSON)
          (body (second result)) ; The raw response body
          (status-code (third result))) ; The HTTP status code
