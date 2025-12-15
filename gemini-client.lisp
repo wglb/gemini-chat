@@ -109,47 +109,149 @@
 
 ;; --- Core API Request Function ---
 
-(defun do-api-request (uri-parts payload method)
-  "Perform api call using either the secure Bearer token or a static API key."
-  (let* ((auth-info (get-auth-info))
-         ;; Initialize headers with the required Accept type
-         (headers (acons "Accept" "application/json" nil)))
+;;; gemini-client.lisp, near source: 21 (Replaces the entire DO-API-REQUEST function)
 
+(defun do-api-request (uri-parts payload method)
+  "Perform api call using either the secure Bearer token or a static API key,
+   with built-in exponential backoff for rate limiting (429 errors)."
+  ;; DECLARE must be the FIRST form in the function body
+  (let* ((auth-info (get-auth-info))
+         (headers (acons "Accept" "application/json" nil))
+         (retries 0)
+         (max-retries 5) ; Set a maximum number of retries
+         (uri (concatenate 'string *gemini-endpoint* "/" uri-parts)))
+
+    ;; Authentication setup (remains outside the retry loop)
     (cond
       ((eq (getf auth-info :type) :static-key)
-       ;; Use the API Key header for static key authentication
        (setf headers (acons "x-goog-api-key" (getf auth-info :value) headers)))
       
       ((eq (getf auth-info :type) :bearer-token)
-       ;; Use the Authorization header for JWT/Bearer token authentication
        (let ((token (getf auth-info :value)))
          (setf headers (acons "Authorization" (concatenate 'string "Bearer " token) headers))))
       
       (t
        (xlg :thinking-log "No authentication information available for API request.")))
 
-    (multiple-value-bind (bbody status-code headers uri-back http-stream must-close status-text)
-        (drakma:http-request
-         (concatenate 'string *gemini-endpoint* "/" uri-parts)
-         :method method
-         :cookie-jar *cookie-jar*
-         :user-agent *user-agent*
-         :content payload
-         :content-type "application/json"
-         :additional-headers headers) ; Use the dynamically constructed headers
-      (declare (ignorable bbody status-code headers uri-back http-stream must-close status-text))
-      (let ((body (cond ((stringp bbody) bbody)
-                        (t (map 'string #'code-char bbody))))
-            (our-json nil)
-            (content-type (cdr (assoc :content-type headers))))
+    ;; START OF EXPONENTIAL BACKOFF LOOP
+    (loop
+      (multiple-value-bind (bbody status-code headers uri-back http-stream must-close status-text)
+          (drakma:http-request uri
+                               :method method
+                               :cookie-jar *cookie-jar*
+                               :user-agent *user-agent*
+                               :content payload
+                               :content-type "application/json"
+                               :additional-headers headers)
         
-        ;; FIX: Use SEARCH to find "application/json" within the header value,
-        ;; allowing for parameters like "; charset=utf-8".
-        (if (and content-type (search "application/json" content-type :test #'char-equal))
-            (setf our-json (jsown:parse body)))
+        ;; DECLARE for the M-V-B variables must be the FIRST form inside the BIND
+        (declare (ignorable uri-back http-stream must-close status-text))
 
-        (xlgt :thinking-log "Status: ~a" status-code)
-        (list our-json body status-code headers uri-back http-stream must-close status-text)))))
+        (let ((body (cond ((stringp bbody) bbody)
+                          (t (map 'string #'code-char bbody))))
+              (our-json nil)
+              (content-type (cdr (assoc :content-type headers))))
+          
+          (xlgt :thinking-log "Status: ~a (Attempt ~a)" status-code (1+ retries))
+
+          (cond
+            ;; 429: Too Many Requests - Trigger Backoff/Retry
+            ((= status-code 429)
+             (when (>= retries max-retries)
+               (error "API Quota exceeded after ~a retries. Giving up. Response body: ~%~a" 
+                      max-retries body))
+
+             (incf retries)
+             ;; Wait time = 2^retries seconds + random jitter
+             (let ((wait-time (+ (expt 2 retries) (random 1.0))))
+               (xlgt :error-log "Quota Exceeded (429). Retrying in ~a seconds (~a/~a)." 
+                    (round wait-time) retries max-retries)
+			   (xlg :thinking-log "Quota Exceeded (429). Retrying in ~a seconds (~a/~a)." 
+                    (round wait-time) retries max-retries)
+			   
+               (sleep wait-time)))
+
+            ;; 200-399: Success or Redirects - Process result and exit loop
+            ((< status-code 400)
+             ;; Parse JSON if content type is application/json
+             (if (and content-type (search "application/json" content-type :test #'char-equal))
+                 (setf our-json (jsown:parse body)))
+
+             ;; Return all relevant values from the multiple-value-bind and exit loop
+             (return (list our-json body status-code headers uri-back http-stream must-close status-text)))
+
+            ;; 400+: General Error - Throw error and exit loop
+            (t
+             (error "API Request failed with status code ~a. Response body: ~%~a" status-code body))))))))
+
+#+nil
+(defun do-api-request (uri-parts payload method)
+  "Perform api call using either the secure Bearer token or a static API key,
+   with built-in exponential backoff for rate limiting (429 errors)."
+  (declare (ignorable user-pwd-base))
+  (let* ((auth-info (get-auth-info))
+         (headers (acons "Accept" "application/json" nil))
+         (retries 0)
+         (max-retries 5)			 ; Set a maximum number of retries
+         (uri (concatenate 'string *gemini-endpoint* "/" uri-parts))) ; Define URI outside the loop
+
+    (cond
+      ((eq (getf auth-info :type) :static-key)
+       (setf headers (acons "x-goog-api-key" (getf auth-info :value) headers)))
+      
+      ((eq (getf auth-info :type) :bearer-token)
+       (let ((token (getf auth-info :value)))
+         (setf headers (acons "Authorization" (concatenate 'string "Bearer " token) headers))))
+      
+      (t
+       (xlg :thinking-log "No authentication information available for API request.")))
+
+    ;; START OF EXPONENTIAL BACKOFF LOOP
+    (loop
+      (multiple-value-bind (bbody status-code headers uri-back http-stream must-close status-text)
+          (drakma:http-request uri
+                               :method method
+                               :cookie-jar *cookie-jar*
+                               :user-agent *user-agent*
+                               :content payload
+                               :content-type "application/json"
+                               :additional-headers headers)
+        
+        (let ((body (cond ((stringp bbody) bbody)
+                          (t (map 'string #'code-char bbody))))
+              (our-json nil)
+              (content-type (cdr (assoc :content-type headers))))
+          
+          (xlgt :thinking-log "Status: ~a (Attempt ~a)" status-code (1+ retries))
+
+          (cond
+            ;; 429: Too Many Requests - Trigger Backoff/Retry
+            ((= status-code 429)
+             (when (>= retries max-retries)
+               (error "API Quota exceeded after ~a retries. Giving up. Response body: ~%~a" 
+                      max-retries body))
+
+             (incf retries)
+             ;; Wait time = 2^retries seconds + random jitter (to avoid thundering herd)
+             (let ((wait-time (+ (expt 2 retries) (random 1.0))))
+               (xlogntft "Quota Exceeded (429). Retrying in ~a seconds (~a/~a)." 
+                         (round wait-time) retries max-retries)
+               (sleep wait-time)))
+
+            ;; 200-399: Success or Redirects - Process result and exit loop
+            ((< status-code 400)
+             (declare (ignore uri-back http-stream must-close status-text))
+             
+             ;; Parse JSON if content type is application/json
+             (if (and content-type (search "application/json" content-type :test #'char-equal))
+                 (setf our-json (jsown:parse body)))
+
+             ;; Return all relevant values from the multiple-value-bind
+             (return (list our-json body status-code headers uri-back http-stream must-close status-text)))
+
+            ;; 400+: General Error - Throw error
+            (t
+             (error "API Request failed with status code ~a. Response body: ~%~a" status-code body))))))))
 
 ;; --- Example Usage (Gemini/AI endpoint) ---
 
