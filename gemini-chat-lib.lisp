@@ -273,24 +273,6 @@ Returns the text string or NIL if not found."
 		(xlg :thinking-log "~&########################################Full assembled prompt for Gemini:~%~a~%^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^" assembled-prompt)
 		(values assembled-prompt t)))))
 
-#+nil
-(defun build-full-prompt (ctx-content input-files prompt exit-on-error)
-  "Constructs the complete prompt by combining all sections."
-  (let ((full-prompt-list nil))
-    (multiple-value-bind (input-files-string success-p)
-        (assemble-input-files-prompt input-files exit-on-error)
-      (unless success-p
-        (return-from build-full-prompt (values nil nil)))
-      (when ctx-content
-        (push (assemble-context-prompt ctx-content) full-prompt-list))
-      (when input-files-string
-        (push input-files-string full-prompt-list))
-      (when prompt
-        (push (assemble-user-prompt prompt) full-prompt-list))
-      (let ((assembled-prompt (format nil "~{~a~%~%~}" (nreverse full-prompt-list))))
-        (xlg :thinking-log "~&Full assembled prompt for Gemini:~%~a~%" assembled-prompt)
-        (values assembled-prompt t)))))
-
 (defun gem-conv (initial-prompt keyname api-url-arg save single-shot exit-on-error &key (model "gemini-2.5-pro"))
   "Handles a single conversation turn with Gemini. 'initial-prompt' is the first message."
   (declare (ignorable exit-on-error))
@@ -325,46 +307,6 @@ Returns the text string or NIL if not found."
                   (t
                    (push (make-message-turn "user" (list (make-text-part user-input))) conversation-history)))))))
         (when single-shot (return))))))
-
-(defun gem-conv-with-case (initial-prompt keyname api-url-arg save single-shot exit-on-error &key (model "gemini-2.5-pro"))
-  "Handles a single conversation turn with Gemini. 'initial-prompt' is the first message."
-  (let ((conversation-history (list (make-message-turn "user" (list (make-text-part initial-prompt))))))
-    (loop
-      (handler-case
-          (let* ((resp-stream (api-req conversation-history keyname api-url-arg :model model))
-                 (parsed-json (parse-api-resp resp-stream)))
-            (close resp-stream)
-            (when save
-              (save-cmd (format nil ":save ~a" save)))
-            (let ((answer (extract-txt parsed-json)))
-              (when (jsown:keyp parsed-json "candidates")
-                (push (make-message-turn "model" (list (make-text-part answer))) conversation-history))
-              (unless (or (string= answer "quit") (string= answer ":quit") single-shot)
-                (format t "~&Single shot is ~s>> " single-shot)
-                (finish-output)
-                (let ((user-input (read-line)))
-                  (when (or (string= user-input "quit") (string= user-input ":quit"))
-                    (return))
-                  (let ((command (if (s/nz user-input)
-                                     (string-trim '(#\Space #\Tab)
-                                                  (car (s-s user-input #\Space :rem-empty nil)))
-                                     "")))
-                    (cond
-                      ((string= command ":input")
-                       (input-cmd user-input))
-                      
-                      ;; FIX: Correctly calls save-cmd with user-input string
-                      ((string= command ":save")
-                       (save-cmd user-input)) 
-                       
-                      (t
-                       (push (make-message-turn "user" (list (make-text-part user-input))) conversation-history)))))))
-            (when single-shot (return)))
-        (error (e)
-          (break "gem-conf: error ~s" e)
-          (xlgt :error-log "~&An error occurred: ~a~%" e)
-          (when exit-on-error
-            (return)))))))
 
 (defun save-cmd (out-to-user &key (if-exists :supersede))
   "Handles the :save command, opening a new file for responses."
