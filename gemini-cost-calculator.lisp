@@ -14,6 +14,9 @@
      (:output-cost-per-m 10.00))
     (:gemini-2.5-flash
      (:input-cost-per-m 0.30)
+     (:output-cost-per-m 2.50))
+	(:n/a
+	 (:input-cost-per-m 0.30)
      (:output-cost-per-m 2.50)))
   "Standard pricing (USD per 1 Million tokens) for various Gemini models.
    This excludes long-context prompts (> 200k tokens).")
@@ -21,14 +24,17 @@
 (defun get-pricing-data (model-keyword &optional (pricing-list *gemini-pricing*))
   "Retrieves the pricing alist for a given model keyword from a specific
    pricing list, defaulting to *GEMINI-PRICING*."
-  (cdr (assoc model-keyword pricing-list)))
+  (format t "model keyword ~s~%" model-keyword)
+  (let ((ans (cdr (assoc model-keyword pricing-list))))
+	(unless ans
+	  (error "No pricing data for ~s in ~s" model-keyword pricing-list))))
 
 (defun get-cost-per-m (pricing-data cost-type)
   "Retrieves the specific cost (e.g., :input-cost-per-m) from a pricing alist."
   (let ((result (assoc cost-type pricing-data)))
     (if result
         (second result)
-        (error "Cost type ~A not found for model pricing data." cost-type))))
+        (error "Cost type ~A not found for model pricing data ~s." cost-type pricing-data))))
 
 (defun normalize-model-name (model-string)
   "Converts a model string to a canonical keyword for price lookup,
