@@ -76,35 +76,35 @@
   (jsown:new-js ("contents" msgs)))
 
 (defun api-req (msgs keyname api-url-arg &key (model "gemini-2.5-pro"))
-  "Constructs and sends an HTTP POST request to the Gemini API.
-  'msgs' should be a list of Lisp :OBJ structures, each representing a conversation turn.
-  'model' specifies the Gemini model to use (e.g., \"gemini-2.5-pro\", \"gemini-1.5-flash\").
-  Returns the response stream if successful."
-  (let* ((api-key (get-key keyname))
-         (api-url (format nil "~a~a:generateContent?key=~a" api-url-arg model api-key))
+  "Constructs and sends an HTTP POST request to the Gemini API, 
+   delegating to DO-API-REQUEST for backoff and auth. Returns the parsed JSON object."
+  (declare (ignorable keyname api-url-arg))
+  (let* (;; The API key is handled by the client library *static-api-key*
+         (uri-parts (format nil "models/~a:generateContent" model))
          (json-payload-lisp-object (make-api-request-payload msgs))
-         (json-payload-string (jsown:to-json json-payload-lisp-object))
-         (headers '(("Content-Type" . "application/json"))))
-    (xlg :thinking-log "~&Making API request to: ~a" api-url)
+         (json-payload-string (jsown:to-json json-payload-lisp-object)))
+    (xlg :thinking-log "~&Making API request to: ~a" uri-parts)
     (xlg :thinking-log "JSON string being sent: ~a" json-payload-string)
     (handler-case
-        (drakma:http-request api-url :method :post :content-type "application/json" :content json-payload-string :additional-headers headers :want-stream t :force-ssl t)
-      (drakma:drakma-error (c)
-        (error "HTTP Request Failed: ~a" c))
+        (let ((result-list (do-api-request uri-parts json-payload-string :post)))
+          (first result-list)) ; <-- Returns the parsed JSON object
       (error (c)
-        (error "An unexpected error occurred during the HTTP request: ~a" c)))))
-
+        (error "An unexpected error occurred during the API request: ~a" c)))))
+    
+#+nil
 (defun parse-api-resp (resp-stream)
   "Parses the JSON response from the Gemini API response stream using jsown.
    Returns the parsed JSON as a Lisp object (jsown's internal :OBJ format)."
-  (handler-case
-      (let* ((json-string (uiop:slurp-stream-string resp-stream))
-             (pjs (jsown:parse json-string)))
-        (xlg :thinking-log "~&Raw JSON string received:~% ~a" pjs)
-        pjs)
-    (error (c)
-      (xlgt :error-log "~&Failed to parse JSON response: ~a" c)
-      (error "Failed to parse JSON response: ~a" c))))
+  (declare (ignorable resp-stream))
+  ;; This function is now OBSOLETE. The parsing is done in DO-API-REQUEST.
+  #+nil (handler-case
+			(let* ((json-string (uiop:slurp-stream-string resp-stream))
+				   (pjs (jsown:parse json-string)))
+			  (xlg :thinking-log "~&Raw JSON string received:~% ~a" pjs)
+			  pjs)
+		  (error (c)
+			(xlgt :error-log "~&Failed to parse JSON response: ~a" c)
+			(error "Failed to parse JSON response: ~a" c))))
 
 (defun extract-txt (parsed-json)
   "Extracts the generated text from the parsed Gemini API JSON response using jsown accessors.
@@ -226,7 +226,7 @@ Returns the text string or NIL if not found."
             ;; 2. Catch the specific decoding error (UTF-16LE detected)
             (sb-int:stream-decoding-error (e) 
               (declare (ignore e))
-              (xlg :error-log "aifp: Retrying ~a with :UTF-16LE due to decoding error." native-file-path) 
+              (xlgt :error-log "aifp: Retrying ~a with :UTF-16LE due to decoding error." native-file-path) 
               ;; Use the safe string for file reading (retry)
               (setf file-content (uiop:read-file-string native-file-path :external-format :utf-16le)))
             
@@ -278,34 +278,31 @@ Returns the text string or NIL if not found."
   (declare (ignorable exit-on-error))
   (let ((conversation-history (list (make-message-turn "user" (list (make-text-part initial-prompt))))))
     (loop
-	  (let* ((resp-stream (api-req conversation-history keyname api-url-arg :model model))
-             (parsed-json (parse-api-resp resp-stream)))
-        (close resp-stream)
+	  (let* ((parsed-json (api-req conversation-history keyname api-url-arg :model model))) ; <-- Gets parsed JSON directly
         (when save
           (save-cmd (format nil ":save ~a" save)))
         (let ((answer (extract-txt parsed-json)))
           (when (jsown:keyp parsed-json "candidates")
             (push (make-message-turn "model" (list (make-text-part answer))) conversation-history))
           (unless (or (string= answer "quit") (string= answer ":quit") single-shot)
-            (format t "~&Single shot is ~s>> " single-shot)
+       (format t "~&Single shot is ~s>> " single-shot)
             (finish-output)
             (let ((user-input (read-line)))
               (when (or (string= user-input "quit") (string= user-input ":quit"))
                 (return))
               (let ((command (if (s/nz user-input)
-                                 (string-trim '(#\Space #\Tab)
+								 (string-trim '(#\Space #\Tab)
                                               (car (s-s user-input #\Space :rem-empty nil)))
-                                 "")))
+								 "")))
                 (cond
                   ((string= command ":input")
                    (input-cmd user-input))
                   
-                  ;; FIX: Correctly calls save-cmd with user-input string
                   ((string= command ":save")
                    (save-cmd user-input)) 
                   
                   (t
-                   (push (make-message-turn "user" (list (make-text-part user-input))) conversation-history)))))))
+				   (push (make-message-turn "user" (list (make-text-part user-input))) conversation-history)))))))
         (when single-shot (return))))))
 
 (defun save-cmd (out-to-user &key (if-exists :supersede))
