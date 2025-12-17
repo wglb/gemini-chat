@@ -11,4 +11,8 @@
   (:import-from #:jsown #:to-json #:parse)
   (:import-from #:uiop #:getenv #:slurp-stream-string #:read-file-forms)
   (:export #:run-chat-with-kw
-		   #:get-key))
+		   #:get-key
+		   #:upload-file-to-gemini
+		   #:*static-api-key*
+		   #:delete-gemini-file))
+
