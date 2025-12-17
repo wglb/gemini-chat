@@ -91,21 +91,6 @@
       (error (c)
         (error "An unexpected error occurred during the API request: ~a" c)))))
     
-#+nil
-(defun parse-api-resp (resp-stream)
-  "Parses the JSON response from the Gemini API response stream using jsown.
-   Returns the parsed JSON as a Lisp object (jsown's internal :OBJ format)."
-  (declare (ignorable resp-stream))
-  ;; This function is now OBSOLETE. The parsing is done in DO-API-REQUEST.
-  #+nil (handler-case
-			(let* ((json-string (uiop:slurp-stream-string resp-stream))
-				   (pjs (jsown:parse json-string)))
-			  (xlg :thinking-log "~&Raw JSON string received:~% ~a" pjs)
-			  pjs)
-		  (error (c)
-			(xlgt :error-log "~&Failed to parse JSON response: ~a" c)
-			(error "Failed to parse JSON response: ~a" c))))
-
 (defun extract-txt (parsed-json)
   "Extracts the generated text from the parsed Gemini API JSON response using jsown accessors.
 Returns the text string or NIL if not found."
