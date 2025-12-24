@@ -18,10 +18,13 @@ $(CHAT_EXE): gemini-chat.lisp gemini-chat.asd gemini-chat-pkg.lisp gemini-chat-l
 		--eval '(save-core-uncompressed)'
 	touch $(CHAT_EXE)
 
-install: $(BIN_DIR)/$(CALC_EXE)
+install: $(BIN_DIR)/$(CALC_EXE) $(BIN_DIR)/$(CHAT_EXE)
 
 $(BIN_DIR)/$(CALC_EXE): $(CALC_EXE)
 	cp -v $(CALC_EXE) $(BIN_DIR)/$(CALC_EXE)
+
+$(BIN_DIR)/$(CHAT_EXE): $(CHAT_EXE)
+	cp -v $(CHAT_EXE) $(BIN_DIR)/$(CHAT_EXE)
 
 clean:
 	rm -f $(CALC_EXE) $(CHAT_EXE)
