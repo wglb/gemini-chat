@@ -10,11 +10,7 @@
                #:split-sequence
                #:uiop
 			   #:file-packer-lib
-			   #:cljwt        ; JWT signing (Requires Ironclad)
-               #:ironclad     ; Cryptography library (for cljwt)
                #:cl-base64
-			   #:jose
-			   #:cl-ssh-keys
                #:xlg-lib)
   :components ((:file "gemini-chat-lib-pkg")
                (:file "gemini-client")
