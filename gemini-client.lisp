@@ -5,104 +5,63 @@
 ;;; Copyright: 2025 (Based on user preference)
 
 (in-package #:gemini-chat-lib)
+
 (declaim (optimize (speed 0) (safety 3) (space 0) (debug 3)))
 
 ;; --- Constants and Variables ---
 
 (defparameter *gemini-endpoint* "https://generativelanguage.googleapis.com/v1beta")
-(defparameter *auth-endpoint* "https://www.googleapis.com/oauth2/v4/token")
 (defparameter *user-agent* "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
 (defparameter *cookie-jar* (make-instance 'drakma:cookie-jar)) 
-
-;; Stores the Service Account Private Key info loaded from the JSON file
-(defvar *iam-credentials* nil)
-
-;; Stores the dynamic access token and its expiration time (IAM flow)
-(defvar *access-token-info* '(:token nil :expires-at 0))
 
 ;; New: Stores a static API key (for simpler, but less secure, authentication)
 (defparameter *static-api-key* nil
   "Stores a static Gemini API Key for direct authentication, bypassing the IAM flow.")
 
-;; --- Core Authentication Functions (IAM/OAuth 2.0 Flow) ---
+(defvar *gemini-service-account* nil
+  "The GCP Service Account email for impersonation. 
+Users should set this or the GEMINI_SERVICE_ACCOUNT environment variable.")
 
-(defun initialize-iam-credentials (service-account-json-path)
-  "Loads the Google Service Account JSON key file into *iam-credentials* using jsown:parse."
-  (setf *iam-credentials* (with-open-file (s service-account-json-path)
-                            (jsown:parse s)))
-  (xlg :thinking-log "Loaded IAM credentials from ~a." service-account-json-path)
-  (values))
-
-(defun generate-jwt-assertion ()
-  "Creates and signs a JSON Web Token (JWT) assertion using the JOSE library."
-  (flet ((alist-to-plist (alist)
-           (let ((plist nil))
-             (dolist (pair alist (nreverse plist))
-               (push (cdr pair) plist)
-               (push (intern (string-upcase (car pair)) :keyword) plist)))))
-    
-    (let* ((private-key-pem (jsown:val *iam-credentials* "private_key"))
-           (client-email (jsown:val *iam-credentials* "client_email"))
-           (scope "https://www.googleapis.com/auth/cloud-platform")
-           (now (get-universal-time))
-           (private-key (ssh-keys:parse-private-key private-key-pem)) 
-           
-           (claims-alist `(("iss" . ,client-email)
-                           ("scope" . ,scope)
-                           ("aud" . ,*auth-endpoint*)
-                           ("exp" . ,(+ now 3600)) ; Expires in 1 hour
-                           ("iat" . ,now)))
-           (claims-plist (alist-to-plist claims-alist)))
-           
-      (xlg :thinking-log "Signing JWT assertion for Service Account: ~a" client-email)
-      ;; Use the standard 3-argument JWS/JWT encoding function.
-      (jose:encode :rs256 private-key claims-plist))))
-
-(defun get-fresh-bearer-token ()
-  "Executes the JWT assertion grant flow to obtain a fresh Bearer token."
-  (let* ((assertion (generate-jwt-assertion))
-         (payload (format nil "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=~a"
-                          assertion))
-         (response (drakma:http-request *auth-endpoint*
-                                        :method :post
-                                        :content payload
-                                        :content-type "application/x-www-form-urlencoded")))
-    (let* ((token-data (jsown:parse response))
-           (access-token (jsown:val token-data "access_token"))
-           (expires-in (jsown:val token-data "expires_in")))
-      (setf (getf *access-token-info* :token) access-token)
-      ;; Set expiration time a bit early (10 minutes buffer) to ensure refresh
-      (setf (getf *access-token-info* :expires-at) (- (+ (get-universal-time) expires-in) 600))
-      (xlg :thinking-log "Successfully retrieved new access token, expires in ~a seconds." expires-in)
-      access-token)))
-
-(defun get-bearer-token ()
-  "Returns the cached Bearer token, refreshing it if it's expired or nil."
-  (let ((token (getf *access-token-info* :token))
-        (expires-at (getf *access-token-info* :expires-at)))
-    (if (or (null token) (< expires-at (get-universal-time)))
-        (get-fresh-bearer-token)
-        token)))
+(defun get-fresh-gemini-token ()
+  "Fetches a fresh 60-minute token via gcloud impersonation.
+Checks *gemini-service-account* first, then the environment."
+  (let ((sa-email (or *gemini-service-account*
+                      (uiop:getenv "GEMINI_SERVICE_ACCOUNT"))))
+    (cond
+      ((not sa-email)
+       (xlg :thinking-log "Auth Error: No Service Account configured via *gemini-service-account* or ENV.")
+       nil)
+      (t
+       (handler-case
+           (uiop:run-program 
+            (list "gcloud" "auth" "print-access-token" 
+                  (format nil "--impersonate-service-account=~a" sa-email))
+            :output '(:string :stripped t)
+            :error-output nil) ; Discards the gcloud "WARNING" from the Lisp string
+         (error (c)
+           (xlg :thinking-log "Gcloud execution failed: ~a" c)
+           nil))))))
 
 (defun get-auth-info ()
   "Determines the active authentication method and returns the necessary info."
-  (cond
-    ;; Priority 1: Use the static API key if set.
-    (*static-api-key*
-     (xlg :thinking-log "Using static API key.")
-     (list :type :static-key :value *static-api-key*))
-    
-    ;; Priority 2: Use the IAM Bearer token if credentials are loaded.
-    (*iam-credentials*
-     (let ((token (get-bearer-token))) 
-       (xlg :thinking-log "Using IAM Bearer token.")
-       (list :type :bearer-token :value token)))
+  (let ((token nil))
+    (cond
+      ;; Priority 1: Use the static API key if set.
+      (*static-api-key*
+       (xlg :thinking-log "Using static API key.")
+       (list :type :static-key :value *static-api-key*))
 
-    ;; Fallback: No authentication info.
-    (t
-     (xlg :thinking-log "Warning: No authentication method configured.")
-     nil)))
+      ;; Priority 2: Use gcloud impersonation.
+      ;; This now correctly calls the helper function defined above.
+      ((setf token (get-fresh-gemini-token))
+       (xlg :thinking-log "Using impersonated IAM Bearer token.")
+       (list :type :bearer-token :value token))
 
+      ;; Fallback: No authentication info.
+      (t
+       (xlgt :thinking-log "Warning: No authentication method configured (gcloud failed or not set).")
+	   (error "Warning: No authentication method configured (gcloud failed or not set).")
+       nil))))
 
 ;; --- Core API Request Function ---
 
@@ -241,34 +200,68 @@
   (babel:octets-to-string octets :encoding :utf-8))
 
 (defun upload-file-to-gemini (file-path mime-type)
-  "Uploads a file to the Gemini File API using multipart/form-data.
-Returns the file 'name' (the identifier string for subsequent API calls)."
+  "Uploads a file to Gemini. Uses Resumable Upload for Bearer Tokens.
+Adjusts JSON structure specifically for the resumable initiation step."
   (let* ((auth (get-auth-info))
-         (url "https://generativelanguage.googleapis.com/upload/v1beta/files")
-         (metadata (jsown:to-json 
-                    `(:obj ("file" . (:obj ("display_name" . ,(file-namestring file-path))
-                                          ("mime_type" . ,mime-type))))))
-         (parameters `(("metadata" . ,metadata)
-                       ("file" . ,(pathname file-path))))
-         (headers (case (getf auth :type)
-                    (:static-key `(("x-goog-api-key" . ,(getf auth :value))))
-                    (:bearer-token `(("Authorization" . ,(format nil "Bearer ~a" (getf auth :value)))))
-                    (otherwise (error "No valid authentication found for file upload.")))))
+         (auth-type (getf auth :type))
+         (base-url "https://generativelanguage.googleapis.com/upload/v1beta/files")
+         (display-name (format nil "~a-~a" (file-namestring file-path) (get-universal-time))))
     
+    (if (eq auth-type :static-key)
+        ;; PATH A: STATIC KEY (Nesting "file" is required for multipart)
+        (let ((metadata (jsown:to-json 
+                         `(:obj ("file" . (:obj ("display_name" . ,display-name)
+                                                ("mime_type" . ,mime-type))))))
+              (headers `(("x-goog-api-key" . ,(getf auth :value)))))
+          (upload-multipart-simple base-url metadata file-path mime-type headers))
+
+        ;; PATH B: BEARER TOKEN (Resumable)
+        ;; FIX: Resumable initiation often expects flat metadata at the root.
+        (let ((metadata (jsown:to-json 
+                         `(:obj ("display_name" . ,display-name)
+                                ("mime_type" . ,mime-type))))
+              (init-url (format nil "~a?uploadType=resumable" base-url))
+              (headers `(("Authorization" . ,(format nil "Bearer ~a" (getf auth :value)))
+                         ("X-Goog-Upload-Protocol" . "resumable")
+                         ("X-Goog-Upload-Command" . "start")
+                         ("X-Goog-Upload-Header-Content-Type" . ,mime-type)
+                         ("Content-Type" . "application/json; charset=UTF-8"))))
+          (multiple-value-bind (body status resp-headers)
+              (drakma:http-request init-url :method :post :content metadata :additional-headers headers)
+            (declare (ignore body))
+            (if (= status 200)
+                (let ((upload-url (cdr (assoc :x-goog-upload-url resp-headers))))
+                  (multiple-value-bind (final-body final-status)
+                      (drakma:http-request upload-url
+                                           :method :post
+                                           :content (with-open-file (s file-path :element-type '(unsigned-byte 8))
+                                                      (let ((v (make-array (file-length s) :element-type '(unsigned-byte 8))))
+                                                        (read-sequence v s)
+                                                        v))
+                                           :additional-headers `(("X-Goog-Upload-Command" . "upload, finalize")
+                                                                 ("X-Goog-Upload-Offset" . "0")
+                                                                 ("Content-Type" . ,mime-type)))
+                    (parse-gemini-upload-response final-body final-status)))
+                (error "Resumable Initiation Failed (Status ~a). Payload: ~a" status metadata)))))))
+
+(defun parse-gemini-upload-response (body status)
+  (let* ((resp-str (if (stringp body) body (flexi-streams:octets-to-string body)))
+         (json (jsown:parse resp-str)))
+    (if (and (>= status 200) (< status 300))
+        (jsown:val (jsown:val json "file") "name")
+        (error "Gemini Final Upload Failed (~a): ~a" status resp-str))))
+
+(defun upload-multipart-simple (url metadata file-path mime-type headers)
+  (flexi-streams:with-input-from-sequence 
+      (m-stream (flexi-streams:string-to-octets metadata :external-format :utf-8))
     (multiple-value-bind (body status)
         (drakma:http-request url
                              :method :post
-                             :parameters parameters
+                             :parameters `(("metadata" ,m-stream :content-type "application/json")
+                                           ("file" ,(pathname file-path) :content-type ,mime-type))
                              :additional-headers headers
-                             :external-format-out :utf-8)
-      (let* ((resp-str (if (stringp body) body (octets-to-string body)))
-             (json (jsown:parse resp-str)))
-        ;; Fixed typo: using 'status' instead of 'status-code'
-        (if (and (>= status 200) (< status 300))
-            (let ((file-id (jsown:val (jsown:val json "file") "name")))
-              (xlg :thinking-log "File ~a uploaded. ID: ~a" (file-namestring file-path) file-id)
-              file-id)
-            (error "Gemini Upload Failed (Status ~a): ~a" status resp-str))))))
+                             :form-data t)
+      (parse-gemini-upload-response body status))))
 
 (defun delete-gemini-file (file-id)
   "Deletes a file from the Gemini File API.
