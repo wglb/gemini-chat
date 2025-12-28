@@ -14,5 +14,6 @@
 		   #:get-key
 		   #:upload-file-to-gemini
 		   #:*static-api-key*
+		   #:*gemini-service-account*
 		   #:delete-gemini-file))
 
