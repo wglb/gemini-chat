@@ -13,7 +13,8 @@
   (:export #:run-chat-with-kw
 		   #:get-key
 		   #:upload-file-to-gemini
+		   #:delete-gemini-file
+		   ;; set by client of this lib
 		   #:*static-api-key*
 		   #:*gemini-service-account*
-		   #:delete-gemini-file))
-
+		   #:*gemini-service-account-scopes*))
