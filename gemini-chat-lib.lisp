@@ -357,10 +357,10 @@ Returns the text string or NIL if not found."
   
   (let* ((prompt (string-trim '(#\Space #\Tab #\Newline) (format nil "~{~a~^ ~}" remaining-args))))
     (format t "we are opening log files, and prompt is ~s~%" prompt)
-    (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   tag) :hms)  
-                          (:answer-log   (format nil "~a-the-answer.log" tag) :hms)
+    (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   tag) :hour)  
+                          (:answer-log   (format nil "~a-the-answer.log" tag) :hour)
                           (:token-log    (format nil "~a-token.tkn"      tag) :ymd)
-                          (:error-log    (format nil "~a-error.log"      tag) :hms))
+                          (:error-log    (format nil "~a-error.log"      tag) :hour))
       (format t " log files opened~%")
       (let* ((actual-context-files (if context
                                        (if (atom context)
