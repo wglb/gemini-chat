@@ -22,22 +22,26 @@
   "The GCP Service Account email for impersonation. 
 Users should set this or the GEMINI_SERVICE_ACCOUNT environment variable.")
 
+(defvar *gemini-service-account-scopes* nil)
+
 (defun get-fresh-gemini-token ()
-  "Fetches a fresh 60-minute token via gcloud impersonation.
-Checks *gemini-service-account* first, then the environment."
+  "Fetches a fresh 60-minute token via gcloud impersonation with the correct scopes."
   (let ((sa-email (or *gemini-service-account*
                       (uiop:getenv "GEMINI_SERVICE_ACCOUNT"))))
     (cond
       ((not sa-email)
-       (xlg :thinking-log "Auth Error: No Service Account configured via *gemini-service-account* or ENV.")
+       (xlg :thinking-log "Auth Error: No Service Account configured.")
        nil)
       (t
        (handler-case
-           (uiop:run-program 
-            (list "gcloud" "auth" "print-access-token" 
-                  (format nil "--impersonate-service-account=~a" sa-email))
-            :output '(:string :stripped t)
-            :error-output nil) ; Discards the gcloud "WARNING" from the Lisp string
+		   (uiop:run-program 
+			(list "gcloud" "auth" "print-access-token" 
+				  (format nil "--impersonate-service-account=~a" sa-email)
+				  ;; Add the specific Generative Language scope here
+				  (format nil "--scopes=~a" *gemini-service-account-scopes*)
+				  #+nil "--scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/generative-language")
+			:output '(:string :stripped t)
+			:error-output nil)
          (error (c)
            (xlg :thinking-log "Gcloud execution failed: ~a" c)
            nil))))))
@@ -49,7 +53,7 @@ Checks *gemini-service-account* first, then the environment."
       ;; Priority 1: Use the static API key if set.
       (*static-api-key*
        (xlg :thinking-log "Using static API key.")
-       (list :type :static-key :value *static-api-key*))
+       (list :type :static-key :value *static-api-key*)) ;; TODO this needs to be a config value
 
       ;; Priority 2: Use gcloud impersonation.
       ;; This now correctly calls the helper function defined above.
@@ -199,57 +203,75 @@ Checks *gemini-service-account* first, then the environment."
   "Decodes a byte vector into a UTF-8 string for the Gemini API."
   (babel:octets-to-string octets :encoding :utf-8))
 
-(defun upload-file-to-gemini (file-path mime-type)
-  "Uploads a file to Gemini. Uses Resumable Upload for Bearer Tokens.
-Adjusts JSON structure specifically for the resumable initiation step."
-  (let* ((auth (get-auth-info))
-         (auth-type (getf auth :type))
-         (base-url "https://generativelanguage.googleapis.com/upload/v1beta/files")
-         (display-name (format nil "~a-~a" (file-namestring file-path) (get-universal-time))))
-    
-    (if (eq auth-type :static-key)
-        ;; PATH A: STATIC KEY (Nesting "file" is required for multipart)
-        (let ((metadata (jsown:to-json 
-                         `(:obj ("file" . (:obj ("display_name" . ,display-name)
-                                                ("mime_type" . ,mime-type))))))
-              (headers `(("x-goog-api-key" . ,(getf auth :value)))))
-          (upload-multipart-simple base-url metadata file-path mime-type headers))
+(defun read-file-to-octets (path)
+  "Manual binary read to avoid UIOP/Alexandria versioning issues."
+  (with-open-file (stream path :element-type '(unsigned-byte 8))
+    (let ((bytes (make-array (file-length stream) :element-type '(unsigned-byte 8))))
+      (read-sequence bytes stream)
+      bytes)))
 
-        ;; PATH B: BEARER TOKEN (Resumable)
-        ;; FIX: Resumable initiation often expects flat metadata at the root.
-        (let ((metadata (jsown:to-json 
-                         `(:obj ("display_name" . ,display-name)
-                                ("mime_type" . ,mime-type))))
-              (init-url (format nil "~a?uploadType=resumable" base-url))
-              (headers `(("Authorization" . ,(format nil "Bearer ~a" (getf auth :value)))
-                         ("X-Goog-Upload-Protocol" . "resumable")
-                         ("X-Goog-Upload-Command" . "start")
-                         ("X-Goog-Upload-Header-Content-Type" . ,mime-type)
-                         ("Content-Type" . "application/json; charset=UTF-8"))))
-          (multiple-value-bind (body status resp-headers)
-              (drakma:http-request init-url :method :post :content metadata :additional-headers headers)
-            (declare (ignore body))
-            (if (= status 200)
-                (let ((upload-url (cdr (assoc :x-goog-upload-url resp-headers))))
-                  (multiple-value-bind (final-body final-status)
-                      (drakma:http-request upload-url
-                                           :method :post
-                                           :content (with-open-file (s file-path :element-type '(unsigned-byte 8))
-                                                      (let ((v (make-array (file-length s) :element-type '(unsigned-byte 8))))
-                                                        (read-sequence v s)
-                                                        v))
-                                           :additional-headers `(("X-Goog-Upload-Command" . "upload, finalize")
-                                                                 ("X-Goog-Upload-Offset" . "0")
-                                                                 ("Content-Type" . ,mime-type)))
-                    (parse-gemini-upload-response final-body final-status)))
-                (error "Resumable Initiation Failed (Status ~a). Payload: ~a" status metadata)))))))
+
+#+nil
+(defun extract-project-id-from-sa (sa-email)
+  "Extracts 'project-id' from 'name@project-id.iam.gserviceaccount.com'."
+  (let* ((domain (second (uiop:split-string sa-email :separator '(#\@))))
+         (parts (uiop:split-string domain :separator '(#\.))))
+    (first parts)))
+
+
+(defun extract-project-id-from-sa (sa-email)
+  "Extracts 'project-id' from 'name@project-id.iam.gserviceaccount.com'."
+  (let* ((domain (second (uiop:split-string sa-email :separator '(#\@))))
+         (parts (uiop:split-string domain :separator '(#\.))))
+    (first parts)))
+
+
+(defun upload-file-to-gemini (file-path mime-type)
+  "Uploads a file to Gemini using a Static API Key to bypass Service Account 400 errors."
+  (let* ((static-key (uiop:getenv "GEMINI_API_KEY")) 
+         (base-url "https://generativelanguage.googleapis.com/upload/v1beta/files")
+         (display-name (format nil "up-~a" (get-universal-time)))
+         (file-bytes (read-file-to-octets file-path))
+         (auth-headers `(("x-goog-api-key" . ,(or static-key "")))))
+    
+    (unless static-key
+      (error "Upload requires GEMINI_API_KEY environment variable."))
+
+    (let* ((init-url (format nil "~a?uploadType=resumable" base-url))
+           (metadata (jsown:to-json `(:obj ("file" . (:obj ("display_name" . ,display-name)))))))
+      
+      (multiple-value-bind (body status resp-headers)
+          (drakma:http-request init-url :method :post 
+                               :content metadata 
+                               :content-type "application/json"
+                               :additional-headers auth-headers)
+        (cond
+          ;; Success Path: 200 OK and we have the upload destination
+          ((and (= status 200)
+                (or (cdr (assoc :location resp-headers))
+                    (cdr (assoc :x-goog-upload-url resp-headers))))
+           (let ((upload-url (or (cdr (assoc :location resp-headers))
+                                 (cdr (assoc :x-goog-upload-url resp-headers)))))
+             (multiple-value-bind (final-body final-status)
+                 (drakma:http-request upload-url :method :post
+                                      :content file-bytes
+                                      :additional-headers (append auth-headers
+                                                                  `(("Content-Type" . ,mime-type))))
+               (parse-gemini-upload-response final-body final-status))))
+
+          ;; Error Path: Either 400/403 or 200 with missing headers
+          (t
+           (let ((err-msg (if (stringp body) body (flexi-streams:octets-to-string body))))
+             (error "Upload failed (Status ~a): ~a" status err-msg))))))))
+
+
 
 (defun parse-gemini-upload-response (body status)
   (let* ((resp-str (if (stringp body) body (flexi-streams:octets-to-string body)))
          (json (jsown:parse resp-str)))
     (if (and (>= status 200) (< status 300))
-        (jsown:val (jsown:val json "file") "name")
-        (error "Gemini Final Upload Failed (~a): ~a" status resp-str))))
+        (jsown:val (if (jsown:keyp json "file") (jsown:val json "file") json) "name")
+        (error "Gemini Upload Failed (~a): ~a" status resp-str))))
 
 (defun upload-multipart-simple (url metadata file-path mime-type headers)
   (flexi-streams:with-input-from-sequence 
@@ -263,28 +285,78 @@ Adjusts JSON structure specifically for the resumable initiation step."
                              :form-data t)
       (parse-gemini-upload-response body status))))
 
-(defun delete-gemini-file (file-id)
-  "Deletes a file from the Gemini File API.
-'file-id' should be the full name string returned by the upload (e.g., 'files/abc-123')."
-  (let* ((auth (get-auth-info))
-         ;; The file-id already contains the "files/" prefix from the API response.
-         (url (format nil "https://generativelanguage.googleapis.com/v1beta/~a" file-id))
-         (headers (case (getf auth :type)
-                    (:static-key `(("x-goog-api-key" . ,(getf auth :value))))
-                    (:bearer-token `(("Authorization" . ,(format nil "Bearer ~a" (getf auth :value)))))
-                    (otherwise (error "No valid authentication found for file deletion.")))))
+(defun list-gemini-files ()
+  "Lists all files currently stored in the Gemini project using the Static API Key."
+  (let* ((api-key (or (and (boundp '*static-api-key*) *static-api-key*)
+                      (uiop:getenv "GEMINI_API_KEY")))
+         (url (format nil "~a/files" *gemini-endpoint*) #+nil "https://generativelanguage.googleapis.com/v1beta/files")
+         (auth-headers `(("x-goog-api-key" . ,(or api-key "")))))
     
-    (multiple-value-bind (body status)
-        (drakma:http-request url
-                             :method :delete
-                             :additional-headers headers)
-      (if (and (>= status 200) (< status 300))
-          (progn
-            (xlg :thinking-log "Successfully deleted Gemini file: ~a" file-id)
-            t)
-          (error "Failed to delete Gemini file ~a (Status ~a): ~a" 
-                 file-id status (if (stringp body) body (octets-to-string body)))))))
+    (unless (and api-key (not (string= api-key "")))
+      (error "Listing files requires *static-api-key* or GEMINI_API_KEY environment variable."))
 
+    (multiple-value-bind (body status)
+        (drakma:http-request url 
+                             :method :get 
+                             :additional-headers auth-headers)
+      (cond
+        ((= status 200)
+         (let ((parsed (jsown:parse (flexi-streams:octets-to-string body))))
+           ;; The API returns an empty object if no files exist, so check for "files" key
+           (if (jsown:keyp parsed "files")
+               (jsown:val parsed "files")
+               nil)))
+        (t
+         (error "Failed to list files (Status ~a): ~a" 
+                status 
+                (flexi-streams:octets-to-string body)))))))
+
+(defun delete-gemini-file (file-id)
+  "Deletes a file from Gemini using the Static API Key (matching the uploader)."
+  (let* ((static-key *static-api-key*)
+         (url (format nil "~a/~a" *gemini-endpoint* file-id))
+         (auth-headers `(("x-goog-api-key" . ,(or static-key "")))))
+    
+    (unless static-key
+      (error "Deletion requires GEMINI_API_KEY to match the upload credential."))
+
+    (multiple-value-bind (body status)
+        (drakma:http-request url 
+                             :method :delete 
+                             :additional-headers auth-headers)
+      (cond
+        ((= status 200) t)				; Success
+        (t
+         (let ((err-msg (if (stringp body) body (flexi-streams:octets-to-string body))))
+           (error "Failed to delete Gemini file ~a (Status ~a): ~a" file-id status err-msg)))))))
+
+(defun print-gemini-inventory ()
+  "Prints a formatted list of all outstanding blobs with corrected key names."
+  (let ((files (list-gemini-files)))
+    (if (null files)
+        (format t "No outstanding blobs found.~%")
+        (progn
+          (format t "~&~40A | ~25A | ~A~%" "FILE ID" "DISPLAY NAME" "CREATED")
+          (format t "~V@{~A~:*~}~%" 85 "-")
+          (dolist (f files)
+            (format t "~40A | ~25A | ~A~%" 
+                    (jsown:val f "name")
+                    ;; Google uses camelCase here
+                    (if (jsown:keyp f "displayName") (jsown:val f "displayName") "N/A")
+                    (jsown:val f "createTime")))))))
+
+(defun cleanup-all-gemini-blobs ()
+  "Lists and deletes all files found in the project."
+  (let ((files (list-gemini-files))
+        (count 0))
+    (dolist (file files)
+      ;; "name" is lowercase in the JSON response
+      (let ((name (jsown:val file "name")))
+        (format t "Deleting ~a... " name)
+        (delete-gemini-file name)
+        (format t "done.~%")
+        (incf count)))
+    (format t "~&Cleanup complete. Deleted ~a files.~%" count)))
 
 ;;; gemini-chat-lib.lisp (Conceptual new function for batch scanning)
 
@@ -315,20 +387,8 @@ Adjusts JSON structure specifically for the resumable initiation step."
 (defvar *gemini-file-cache* (make-hash-table :test 'equal)
   "Maps a local dependency file path to its Gemini file-ref-id.")
 
+#+nil
 (defun get-or-upload-dependencies (dep-path)
   (let ((existing-id (gethash dep-path *gemini-file-cache*)))
-    (if existing-id
-        existing-id ;; Reuse the one already on the server
-        (let ((new-id (upload-file-to-gemini dep-path "text/plain")))
-          (setf (gethash dep-path *gemini-file-cache*) new-id)
-          new-id))))
-
-
-
-;;; gemini-client.lisp (Replace existing MAKE-GEMINI-PAYLOAD-ALIST)
-
-										; NREVERSE to ensure file part is first
-
-;;; gemini-client.lisp (Replace existing CALL-GEMINI-MODEL)
-
-
+    if existing-id
+	))
