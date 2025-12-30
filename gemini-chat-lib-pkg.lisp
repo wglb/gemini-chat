@@ -11,10 +11,7 @@
   (:import-from #:jsown #:to-json #:parse)
   (:import-from #:uiop #:getenv #:slurp-stream-string #:read-file-forms)
   (:export #:run-chat-with-kw
+		   #:gemini-chat-lib-init
 		   #:get-key
 		   #:upload-file-to-gemini
-		   #:delete-gemini-file
-		   ;; set by client of this lib
-		   #:*static-api-key*
-		   #:*gemini-service-account*
-		   #:*gemini-service-account-scopes*))
+		   #:delete-gemini-file))
