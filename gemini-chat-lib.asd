@@ -13,5 +13,5 @@
                #:cl-base64
                #:xlg-lib)
   :components ((:file "gemini-chat-lib-pkg")
-               (:file "gemini-client")
-			   (:file "gemini-chat-lib")))
+               (:file "gemini-chat-lib")
+			   (:file "gemini-client")))
