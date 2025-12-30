@@ -6,7 +6,7 @@
 (declaim (optimize (speed 0) (safety 3) (debug 3) (space 0)))
 
 ;; A default tag to use if none is provided on the command line.
-(defparameter *d-tag* "chat")
+(defparameter *tag* "chat")
 
 ;; New special variable for the runtime output file stream
 (defparameter *run-out-s* nil
@@ -25,8 +25,7 @@
 (defun get-key (keyname)
   "Retrieves the Gemini API key from ~/.key/keys.lsp. If not found,
    we use the GEMINI_API_KEY environment variable.
-   Signals an error if the environment variable is not set.
-   It first tries GEMINI_API-KEY, then falls back to _GEMINI_API-KEY_."
+   Signals an error if the environment variable is not set."
   (let* ((fn "~/.gemini/keys.lsp")
          (keys (if (probe-file fn)
                    (uiop:read-file-form fn)
@@ -75,10 +74,9 @@
   "Constructs the full JSON payload object for the Gemini API."
   (jsown:new-js ("contents" msgs)))
 
-(defun api-req (msgs keyname api-url-arg &key (model "gemini-2.5-pro"))
+(defun api-req (msgs &key (model "gemini-2.5-pro"))
   "Constructs and sends an HTTP POST request to the Gemini API, 
    delegating to DO-API-REQUEST for backoff and auth. Returns the parsed JSON object."
-  (declare (ignorable keyname api-url-arg))
   (let* (;; The API key is handled by the client library *static-api-key*
          (uri-parts (format nil "models/~a:generateContent" model))
          (json-payload-lisp-object (make-api-request-payload msgs))
@@ -258,12 +256,12 @@ Returns the text string or NIL if not found."
 		(xlg :thinking-log "~&########################################Full assembled prompt for Gemini:~%~a~%^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^" assembled-prompt)
 		(values assembled-prompt t)))))
 
-(defun gem-conv (initial-prompt keyname api-url-arg save single-shot exit-on-error &key (model "gemini-2.5-pro"))
+(defun gem-conv (initial-prompt save single-shot exit-on-error &key (model "gemini-2.5-pro"))
   "Handles a single conversation turn with Gemini. 'initial-prompt' is the first message."
   (declare (ignorable exit-on-error))
   (let ((conversation-history (list (make-message-turn "user" (list (make-text-part initial-prompt))))))
     (loop
-	  (let* ((parsed-json (api-req conversation-history keyname api-url-arg :model model))) ; <-- Gets parsed JSON directly
+	  (let* ((parsed-json (api-req conversation-history  :model model)))
         (when save
           (save-cmd (format nil ":save ~a" save)))
         (let ((answer (extract-txt parsed-json)))
@@ -342,48 +340,46 @@ Returns the text string or NIL if not found."
       (get-output-stream-string result))))
 
 (defun run-chat-with-kw (&key
-                           (keyname "personal")
-                           (api-url "https://generativelanguage.googleapis.com/v1beta/models/")
                            (gemini-model "gemini-2.5-pro")
                            (context "context.txt")
                            (save "")
-                           (tag "chat")
                            (input-files nil)
                            (exit-on-error nil)
                            (single-shot nil)
                            (remaining-args nil))
-  (if (plusp (length keyname))
-	  (setf *static-api-key* (get-key keyname)))
-  
-  (let* ((prompt (string-trim '(#\Space #\Tab #\Newline) (format nil "~{~a~^ ~}" remaining-args))))
-    (format t "we are opening log files, and prompt is ~s~%" prompt)
-    (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   tag) :hour)  
-                          (:answer-log   (format nil "~a-the-answer.log" tag) :hour)
-                          (:token-log    (format nil "~a-token.tkn"      tag) :ymd)
-                          (:error-log    (format nil "~a-error.log"      tag) :hour))
-      (format t " log files opened~%")
+  (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   *tag*) :hour)  
+                        (:answer-log   (format nil "~a-the-answer.log" *tag*) :hour)
+                        (:token-log    (format nil "~a-token.tkn"      *tag*) :ymd)
+                        (:error-log    (format nil "~a-error.log"      *tag*) :hour))
+    (format t " log files opened~%")
+	(let* ((prompt (string-trim '(#\Space #\Tab #\Newline) (format nil "~{~a~^ ~}" remaining-args))))
       (let* ((actual-context-files (if context
                                        (if (atom context)
                                            (list context)
                                            context)
                                        (let ((default-ctx (get-default-context-file)))
-                                         (if default-ctx (list default-ctx) nil))))
-             (ctx-content (proc-ctx-files actual-context-files)))
-        (xlg :thinking-log (format nil "==================================================actual-context ~s ctx-context ~s~%__________________________________________________" actual-context-files ctx-content ) :timestamp t)
-        (when (or (s/nz prompt) input-files context)
+										 (if default-ctx (list default-ctx) nil))))
+			 (ctx-content (proc-ctx-files actual-context-files)))
+		(xlg :thinking-log
+			 (format nil
+					 "======================================actual-context ~s ctx-context ~s~%__________________________________________________"
+					 actual-context-files ctx-content )
+			 :timestamp t)
+		(when (or (s/nz prompt) input-files context)
           (multiple-value-bind (assembled-prompt success-p)
               (build-full-prompt ctx-content input-files prompt exit-on-error)
-            (xlg :thinking-log "gchat::run-chat-with-kw: prompt ~s success ~s" assembled-prompt success-p)
-            (unless success-p
+			(xlg :thinking-log "gchat::run-chat-with-kw: prompt ~s success ~s" assembled-prompt success-p)
+			(unless success-p
               (format t "~&gchat::run-chat-with-kw: Failed to assemble initial prompt. Exiting.~%")
               (return-from run-chat-with-kw nil))
-            (unwind-protect
-                 (progn
+			(unwind-protect
+				 (progn
                    (format t "~&Sending request to Gemini...~%")
-                   (gem-conv assembled-prompt keyname api-url save single-shot exit-on-error :model gemini-model))
+                   (gem-conv assembled-prompt save single-shot exit-on-error :model gemini-model))
               ;; Ensure output stream is closed on exit
               (when *run-out-s*
-                (format t "~&gchat::run-chat-with-kw: Closing save file: ~a~%" (file-namestring (pathname *run-out-s*)))
-                (close *run-out-s*)
-                (setf *run-out-s* nil))))))
-      (format t "~&Exiting.~%")))) ; Closes LET* (C), WITH-OPEN-LOG-FILES (B), LET* (A), DEFUN
+				(format t "~&gchat::run-chat-with-kw: Closing save file: ~a~%" (file-namestring (pathname *run-out-s*)))
+				(close *run-out-s*)
+				(setf *run-out-s* nil))))))
+      (format t "~&Exiting.~%"))))
+
