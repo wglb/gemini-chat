@@ -18,53 +18,66 @@
 (defparameter *static-api-key* nil
   "Stores a static Gemini API Key for direct authentication, bypassing the IAM flow.")
 
+;; Use NIL instead of hardcoded strings to ensure the user provides them via init
 (defvar *gemini-service-account* nil
-  "The GCP Service Account email for impersonation. 
-Users should set this or the GEMINI_SERVICE_ACCOUNT environment variable.")
+  "Populated via gemini-chat-lib-init or GEMINI_SERVICE_ACCOUNT environment variable.")
 
-(defvar *gemini-service-account-scopes* nil)
+(defvar *gemini-service-account-scopes* "https://www.googleapis.com/auth/generative-language")
+
+(defvar *gemini-lib-init-p* nil
+  "Flag to ensure the library has been initialized with account details.")
+
+(defun gemini-chat-lib-init (&key static-key service-account (tag "gemini-run"))
+  "Initializes the library with cloud-specific credentials and starts the logging system."
+  (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   tag) :hour)  
+                        (:answer-log   (format nil "~a-the-answer.log" tag) :hour)
+                        (:token-log    (format nil "~a-token.tkn"      tag) :ymd)
+                        (:error-log    (format nil "~a-error.log"      tag) :hour))
+	(setf *tag* tag)
+    (format t " log files opened for tag ~s~%" *tag*)
+	(setf *static-api-key* (or static-key (uiop:getenv "GEMINI_API_KEY")))
+	(setf *gemini-service-account* (or service-account (uiop:getenv "GEMINI_SERVICE_ACCOUNT")))
+	(setf *gemini-lib-init-p* t)
+	(xlg :thinking-log "Gemini-chat-lib initialized for account ~a" 
+		 (or *gemini-service-account* "Static-Only"))
+	t))
+(defun ensure-gemini-init ()
+  "Ensures the library is initialized before proceeding."
+  (unless *gemini-lib-init-p*
+    (error "Gemini-chat-lib has not been initialized. Call (gemini-chat-lib-init) first.")))
 
 (defun get-fresh-gemini-token ()
-  "Fetches a fresh 60-minute token via gcloud impersonation with the correct scopes."
-  (let ((sa-email (or *gemini-service-account*
-                      (uiop:getenv "GEMINI_SERVICE_ACCOUNT"))))
-    (cond
-      ((not sa-email)
-       (xlg :thinking-log "Auth Error: No Service Account configured.")
-       nil)
-      (t
-       (handler-case
-		   (uiop:run-program 
-			(list "gcloud" "auth" "print-access-token" 
-				  (format nil "--impersonate-service-account=~a" sa-email)
-				  ;; Add the specific Generative Language scope here
-				  (format nil "--scopes=~a" *gemini-service-account-scopes*)
-				  #+nil "--scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/generative-language")
-			:output '(:string :stripped t)
-			:error-output nil)
-         (error (c)
-           (xlg :thinking-log "Gcloud execution failed: ~a" c)
-           nil))))))
+  "Fetches a fresh 60-minute token via gcloud impersonation."
+  (let ((sa-email (or *gemini-service-account* (uiop:getenv "GEMINI_SERVICE_ACCOUNT"))))
+    (if sa-email
+        (handler-case
+            (uiop:run-program 
+             (list "gcloud" "auth" "print-access-token" 
+                   (format nil "--impersonate-service-account=~a" sa-email)
+                   (format nil "--scopes=~a" *gemini-service-account-scopes*))
+             :output '(:string :stripped t)
+             :error-output nil)
+          (error (c) (xlg :thinking-log "Gcloud execution failed: ~a" c) nil))
+        nil)))
 
 (defun get-auth-info ()
-  "Determines the active authentication method and returns the necessary info."
+  "Determines the active authentication method, prioritizing the Bearer token over the Static key."
   (let ((token nil))
     (cond
-      ;; Priority 1: Use the static API key if set.
-      (*static-api-key*
-       (xlg :thinking-log "Using static API key.")
-       (list :type :static-key :value *static-api-key*)) ;; TODO this needs to be a config value
-
-      ;; Priority 2: Use gcloud impersonation.
-      ;; This now correctly calls the helper function defined above.
+      ;; Priority 1: Use gcloud impersonation (Bearer Token)
       ((setf token (get-fresh-gemini-token))
        (xlg :thinking-log "Using impersonated IAM Bearer token.")
        (list :type :bearer-token :value token))
 
+      ;; Priority 2: Use the static API key as fallback
+      (*static-api-key*
+       (xlg :thinking-log "Using static API key.")
+       (list :type :static-key :value *static-api-key*))
+
       ;; Fallback: No authentication info.
       (t
-       (xlgt :thinking-log "Warning: No authentication method configured (gcloud failed or not set).")
-	   (error "Warning: No authentication method configured (gcloud failed or not set).")
+       (xlg :thinking-log "Warning: No authentication method configured (gcloud failed or not set).")
+       (error "Warning: No authentication method configured (gcloud failed or not set).")
        nil))))
 
 ;; --- Core API Request Function ---
@@ -72,6 +85,7 @@ Users should set this or the GEMINI_SERVICE_ACCOUNT environment variable.")
 (defun do-api-request (uri-parts payload method)
   "Perform api call using either the secure Bearer token or a static API key,
    with built-in exponential backoff for rate limiting (429 errors)."
+  (ensure-gemini-init)
   (let* ((auth-info (get-auth-info))
          (headers (acons "Accept" "application/json" nil))
          (retries 0)
@@ -210,68 +224,11 @@ Users should set this or the GEMINI_SERVICE_ACCOUNT environment variable.")
       (read-sequence bytes stream)
       bytes)))
 
-
-#+nil
 (defun extract-project-id-from-sa (sa-email)
   "Extracts 'project-id' from 'name@project-id.iam.gserviceaccount.com'."
   (let* ((domain (second (uiop:split-string sa-email :separator '(#\@))))
          (parts (uiop:split-string domain :separator '(#\.))))
     (first parts)))
-
-
-(defun extract-project-id-from-sa (sa-email)
-  "Extracts 'project-id' from 'name@project-id.iam.gserviceaccount.com'."
-  (let* ((domain (second (uiop:split-string sa-email :separator '(#\@))))
-         (parts (uiop:split-string domain :separator '(#\.))))
-    (first parts)))
-
-
-(defun upload-file-to-gemini (file-path mime-type)
-  "Uploads a file to Gemini using a Static API Key to bypass Service Account 400 errors."
-  (let* ((static-key (uiop:getenv "GEMINI_API_KEY")) 
-         (base-url "https://generativelanguage.googleapis.com/upload/v1beta/files")
-         (display-name (format nil "up-~a" (get-universal-time)))
-         (file-bytes (read-file-to-octets file-path))
-         (auth-headers `(("x-goog-api-key" . ,(or static-key "")))))
-    
-    (unless static-key
-      (error "Upload requires GEMINI_API_KEY environment variable."))
-
-    (let* ((init-url (format nil "~a?uploadType=resumable" base-url))
-           (metadata (jsown:to-json `(:obj ("file" . (:obj ("display_name" . ,display-name)))))))
-      
-      (multiple-value-bind (body status resp-headers)
-          (drakma:http-request init-url :method :post 
-                               :content metadata 
-                               :content-type "application/json"
-                               :additional-headers auth-headers)
-        (cond
-          ;; Success Path: 200 OK and we have the upload destination
-          ((and (= status 200)
-                (or (cdr (assoc :location resp-headers))
-                    (cdr (assoc :x-goog-upload-url resp-headers))))
-           (let ((upload-url (or (cdr (assoc :location resp-headers))
-                                 (cdr (assoc :x-goog-upload-url resp-headers)))))
-             (multiple-value-bind (final-body final-status)
-                 (drakma:http-request upload-url :method :post
-                                      :content file-bytes
-                                      :additional-headers (append auth-headers
-                                                                  `(("Content-Type" . ,mime-type))))
-               (parse-gemini-upload-response final-body final-status))))
-
-          ;; Error Path: Either 400/403 or 200 with missing headers
-          (t
-           (let ((err-msg (if (stringp body) body (flexi-streams:octets-to-string body))))
-             (error "Upload failed (Status ~a): ~a" status err-msg))))))))
-
-
-
-(defun parse-gemini-upload-response (body status)
-  (let* ((resp-str (if (stringp body) body (flexi-streams:octets-to-string body)))
-         (json (jsown:parse resp-str)))
-    (if (and (>= status 200) (< status 300))
-        (jsown:val (if (jsown:keyp json "file") (jsown:val json "file") json) "name")
-        (error "Gemini Upload Failed (~a): ~a" status resp-str))))
 
 (defun upload-multipart-simple (url metadata file-path mime-type headers)
   (flexi-streams:with-input-from-sequence 
@@ -284,6 +241,50 @@ Users should set this or the GEMINI_SERVICE_ACCOUNT environment variable.")
                              :additional-headers headers
                              :form-data t)
       (parse-gemini-upload-response body status))))
+
+(defun parse-gemini-upload-response (body status)
+  (let* ((resp-str (if (stringp body) body (flexi-streams:octets-to-string body)))
+         (json (jsown:parse resp-str)))
+    (if (and (>= status 200) (< status 300))
+        (jsown:val (if (jsown:keyp json "file") (jsown:val json "file") json) "name")
+        (error "Gemini Upload Failed (~a): ~a" status resp-str))))
+
+(defun upload-file-to-gemini (file-path mime-type)
+  "Uploads a file to Gemini using the Resumable protocol via *static-api-key*."
+  (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   *tag*) :hour)  
+                        (:answer-log   (format nil "~a-the-answer.log" *tag*) :hour)
+                        (:token-log    (format nil "~a-token.tkn"      *tag*) :ymd)
+                        (:error-log    (format nil "~a-error.log"      *tag*) :hour))
+    (format t " log files opened~%")
+	(ensure-gemini-init)
+	(let* ((api-key *static-api-key*)
+           (base-upload-url (cl-ppcre:regex-replace "googleapis.com/" *gemini-endpoint* "googleapis.com/upload/"))
+           (init-url (format nil "~a/files?uploadType=resumable" base-upload-url))
+           (display-name (format nil "up-~a" (get-universal-time)))
+           (file-bytes (read-file-to-octets file-path))
+           (auth-headers `(("x-goog-api-key" . ,(or api-key ""))))
+           (metadata (jsown:to-json `(:obj ("file" . (:obj ("display_name" . ,display-name)))))))
+
+      (unless api-key (error "Upload requires *static-api-key*."))
+
+      (multiple-value-bind (body status resp-headers)
+          (drakma:http-request init-url :method :post 
+										:content metadata 
+										:content-type "application/json"
+										:additional-headers auth-headers)
+		(let ((upload-id-url (or (cdr (assoc :location resp-headers)) 
+								 (cdr (assoc :x-goog-upload-url resp-headers)))))
+          (cond
+			((and (member status '(200 201)) upload-id-url)
+			 (multiple-value-bind (final-body final-status)
+				 (drakma:http-request upload-id-url :method :post
+													:content file-bytes
+													:additional-headers (append auth-headers 
+																				`(("Content-Type" . ,mime-type))))
+               (parse-gemini-upload-response final-body final-status)))
+			(t 
+			 (error "Upload Initiation Failed (Status ~a). Path: ~a~%Response: ~a" 
+					status init-url (flexi-streams:octets-to-string body)))))))))
 
 (defun list-gemini-files ()
   "Lists all files currently stored in the Gemini project using the Static API Key."
@@ -392,3 +393,4 @@ Users should set this or the GEMINI_SERVICE_ACCOUNT environment variable.")
   (let ((existing-id (gethash dep-path *gemini-file-cache*)))
     if existing-id
 	))
+

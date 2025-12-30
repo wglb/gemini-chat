@@ -26,7 +26,7 @@
 ;; --- Define Flags using com.google.flag ---
 
 (define-flag *keyname*
-  :help "Name of gemini api key to retrieve"
+  :help "Name of gemini static api key to retrieve"
   :type string
   :selector "key"
   :default-value "personal")
@@ -209,39 +209,45 @@
   (when bad-args
     (xlg :option-log "Unprocessed command-line options: ~s" bad-args)))
 
+(in-package #:gemini-chat)
+
 (defun chk-args (args)
-  (let ((remaining-args (parse-command-line args)))
-	(setf *remaining-args* remaining-args)
-	(let ((badargs (loop for m in *remaining-args*
-                         when (and (plusp (length m))
-                                   (char= (char m 0) #\-))
-                           collect m)))
-      (show-opts :bad-args badargs)
-      (when badargs
-        (error "Unprocessed command-line options: ~s" badargs)
-		#+hil (return-from chk-args nil))
-	  (get-key *keyname*))
-	(cond (*help-is*
-		   (print-help)
-		   nil)
-		  (t t))))
+  "Validates credentials and initializes the gemini-chat-lib.
+   Returns T if at least one authentication method is available."
+  (let* ((remaining-args (parse-command-line args))
+		 (static-key (get-key *keyname*))
+         (service-account (or (uiop:getenv "GEMINI_SERVICE_ACCOUNT")
+                              *gemini-service-account*)))
+    (if remaining-args
+		(error (format nil "Bad arguments: ~s" remaining-args)))
+    ;; Check if either the static key or service account is set
+    (unless (or (and static-key (not (string= static-key "")))
+                (and service-account (not (string= service-account ""))))
+      (error "Initialization failed: No valid Static API Key or Service Account found."))
+
+    ;; Perform the actual library initialization (starts logs, sets globals)
+    (gemini-chat-lib-init :static-key static-key 
+                          :service-account service-account 
+                          :tag *tag*)
+    t))
 
 (defun run-chat (args &key (model "gemini-2.5-pro"))
+  (gemini-chat-lib-init :static-key (get-key *keyname*) )
   (with-open-log-files ((:option-log "option.log" :ymd))
 	(unless (chk-args args)
 	  (return-from run-chat)))
   (format t "What does save say ~s and single shot ~s~%" *save* *single-shot*)
-  (run-chat-with-kw :keyname *keyname*
-					:api-url *api-url*
-					:gemini-model *gemini-model*
-					:context *context*
-					:single-shot *single-shot*
-					:save *save*
-					:tag *tag*
-					:gemini-model model
-					:input-files *input-files*
-					:exit-on-error *exit-on-error*
-					:remaining-args *remaining-args*))
+  (run-chat-with-kw ;; :keyname *keyname*
+   :api-url *api-url*
+   :gemini-model *gemini-model*
+   :context *context*
+   :single-shot *single-shot*
+   :save *save*
+   ;; :tag *tag*
+   :gemini-model model
+   :input-files *input-files*
+   :exit-on-error *exit-on-error*
+   :remaining-args *remaining-args*))
 
 (defun top ()
   "Toplevel function for the compiled gemini-chat executable.
