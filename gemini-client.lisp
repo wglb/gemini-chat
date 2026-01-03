@@ -46,39 +46,48 @@
   (unless *gemini-lib-init-p*
     (error "Gemini-chat-lib has not been initialized. Call (gemini-chat-lib-init) first.")))
 
+(defvar *active-gemini-token* nil "Storage for the current OAuth token.") ;; (setf *active-gemini-token* nil)
+(defvar *token-expiry-time* 0 "Universal time when the token expires.")
+
 (defun get-fresh-gemini-token ()
-  "Fetches a fresh 60-minute token via gcloud impersonation."
-  (let ((sa-email (or *gemini-service-account* (uiop:getenv "GEMINI_SERVICE_ACCOUNT"))))
-    (if sa-email
-        (handler-case
-            (uiop:run-program 
-             (list "gcloud" "auth" "print-access-token" 
-                   (format nil "--impersonate-service-account=~a" sa-email)
-                   (format nil "--scopes=~a" *gemini-service-account-scopes*))
-             :output '(:string :stripped t)
-             :error-output nil)
-          (error (c) (xlg :thinking-log "Gcloud execution failed: ~a" c) nil))
-        nil)))
+  "Fetches a fresh token using the active gcloud user (no impersonation)."
+  (handler-case
+      (uiop:run-program 
+       (list "gcloud" "auth" "print-access-token"
+             "--scopes=https://www.googleapis.com/auth/cloud-platform")
+       :output '(:string :stripped t)
+       :error-output :string)
+    (error (c) (xlgt :thinking-log "Gcloud token fetch failed: ~a" c) nil)))
+
+(defun get-cached-auth-token ()
+  "Returns the cached token if valid, otherwise fetches a new one."
+  (let ((now (get-universal-time)))
+    ;; Branch 1: Token is missing or about to expire (within 60s buffer)
+
+    (cond ((or (not *active-gemini-token*)
+			   (< *token-expiry-time* (+ now 60)))
+		   (xlgt :thinking-log "Token expired or missing. Fetching fresh token...")
+		   (setf *active-gemini-token* (get-fresh-gemini-token))
+		   ;; Set expiry for 55 minutes from now
+		   (setf *token-expiry-time* (+ now (* 55 60)))
+		   *active-gemini-token*)
+
+		  ;; Branch 2: Token is valid
+		  (t (xlgt :thinking-log "Token valid.")
+			 *active-gemini-token*))))
 
 (defun get-auth-info ()
-  "Determines the active authentication method, prioritizing the Bearer token over the Static key."
-  (let ((token nil))
-    (cond
-      ;; Priority 1: Use gcloud impersonation (Bearer Token)
-      ((setf token (get-fresh-gemini-token))
-       (xlg :thinking-log "Using impersonated IAM Bearer token.")
-       (list :type :bearer-token :value token))
-
-      ;; Priority 2: Use the static API key as fallback
+  "Determines the active authentication method. Prioritizes Static Key for AI Studio compatibility."
+  (cond
+      ;; Force static key for AI Studio compatibility with Blobs
       (*static-api-key*
-       (xlg :thinking-log "Using static API key.")
+       (xlgt :thinking-log "Using static API key for AI Studio File API.")
        (list :type :static-key :value *static-api-key*))
 
-      ;; Fallback: No authentication info.
+      ;; Fallback to Bearer only if no key is present
       (t
-       (xlg :thinking-log "Warning: No authentication method configured (gcloud failed or not set).")
-       (error "Warning: No authentication method configured (gcloud failed or not set).")
-       nil))))
+       (list :type :bearer-token :value (get-cached-auth-token)))))
+
 
 ;; --- Core API Request Function ---
 
@@ -249,6 +258,134 @@
         (jsown:val (if (jsown:keyp json "file") (jsown:val json "file") json) "name")
         (error "Gemini Upload Failed (~a): ~a" status resp-str))))
 
+
+(defun upload-file-to-gemini (file-path mime-type)
+  "Uploads a file and returns the blob-id using Drakma's native multipart handling."
+  (ensure-gemini-init)
+  (let* ((api-key *static-api-key*)
+         ;; Use the simple upload endpoint for multipart
+         (simple-url (format nil "https://generativelanguage.googleapis.com/upload/v1beta/files?key=~a" api-key))
+         (display-name (format nil "up-~a" (get-universal-time)))
+         (metadata (jsown:to-json 
+                    `(:obj ("file" . (:obj ("displayName" . ,display-name)
+                                           ("mimeType"    . ,mime-type)))))))
+    
+    (unless api-key (error "Upload requires *static-api-key*."))
+
+    ;; We pass the metadata and file as a list of parameters.
+    ;; Drakma will automatically generate the boundaries and correct CRLF endings.
+    (multiple-value-bind (body status)
+        (drakma:http-request simple-url
+                             :method :post
+							 ;; Use a standard list (no dot) so Drakma can read the keyword arguments
+							 :parameters `(("metadata" . ,metadata)
+										   ("file" ,(pathname file-path) :content-type ,mime-type))
+                             
+                             :preserve-uri t)
+      ;; This should now return a 200/201 and the JSON containing the 'name' field
+      (parse-gemini-upload-response body status))))
+
+#+nil
+(defun upload-file-to-gemini (file-path mime-type)
+  "Uploads a file and returns the blob-id (e.g., files/...) on success."
+  (ensure-gemini-init)
+  (let* ((api-key *static-api-key*)
+         (simple-url (format nil "https://generativelanguage.googleapis.com/upload/v1beta/files?key=~a" api-key))
+         (display-name (format nil "up-~a" (get-universal-time)))
+         (file-bytes (read-file-to-octets file-path))
+         ;; Ensure metadata is nested inside the "file" object per API spec
+         (metadata (jsown:to-json 
+                    `(:obj ("file" . (:obj ("displayName" . ,display-name)
+                                           ("mimeType"    . ,mime-type))))))
+         (boundary "LispBoundary")
+         (crlf (format nil "~C~C" #\return #\linefeed)))
+    
+    (unless api-key (error "Upload requires *static-api-key*."))
+
+    ;; Build the payload as a binary sequence to prevent encoding corruption
+    (let ((payload 
+			(flexi-streams:with-output-to-sequence (s :element-type '(unsigned-byte 8))
+              ;; Part 1: JSON Metadata
+              (write-sequence (flexi-streams:string-to-octets (format nil "--~A~A" boundary crlf) :external-format :utf-8) s)
+              (write-sequence (flexi-streams:string-to-octets (format nil "Content-Type: application/json; charset=UTF-8~A~A" crlf crlf) :external-format :utf-8) s)
+              (write-sequence (flexi-streams:string-to-octets (format nil "~A~A" metadata crlf) :external-format :utf-8) s)
+             
+              ;; Part 2: The File Content
+              (write-sequence (flexi-streams:string-to-octets (format nil "--~A~A" boundary crlf) :external-format :utf-8) s)
+              ;; Note the double CRLF after the header to separate it from the binary data
+              (write-sequence (flexi-streams:string-to-octets (format nil "Content-Type: ~A~A~A" mime-type crlf crlf) :external-format :utf-8) s)
+              (write-sequence file-bytes s) 
+             
+              ;; Termination: Closing boundary must have trailing dashes
+              (write-sequence (flexi-streams:string-to-octets (format nil "~A--~A--" crlf boundary) :external-format :utf-8) s))))
+
+      (multiple-value-bind (body status)
+          (drakma:http-request simple-url
+                               :method :post
+                               :content-type (format nil "multipart/related; boundary=~A" boundary)
+                               :content payload)
+        ;; On status 200, parse-gemini-upload-response extracts the "files/..." ID string
+        (parse-gemini-upload-response body status)))))
+
+#+nil
+(defun upload-file-to-gemini (file-path mime-type)
+  "Uploads a file to Gemini using the Multipart protocol to force mimeType."
+  (ensure-gemini-init)
+  (let* ((api-key *static-api-key*)
+         (base-upload-url (cl-ppcre:regex-replace "googleapis.com/" *gemini-endpoint* "googleapis.com/upload/"))
+         (simple-url (format nil "~a/files?key=~a" base-upload-url api-key))
+         (display-name (format nil "up-~a" (get-universal-time)))
+         (file-bytes (read-file-to-octets file-path))
+         ;; Ensure metadata uses CamelCase for AI Studio
+         (metadata (jsown:to-json 
+                    `(:obj ("file" . (:obj ("displayName" . ,display-name)
+                                           ("mimeType"    . ,mime-type)))))))
+    
+    (unless api-key (error "Upload requires *static-api-key*."))
+
+    ;; This single block replaces BOTH previous multiple-value-bind sections
+	(let* ((boundary "LispBoundary") ;; No dashes here
+       (multipart-content 
+        (with-output-to-string (s)
+          ;; Part 1: Metadata
+          (format s "--~A~C~C" boundary #\return #\linefeed)
+          (format s "Content-Type: application/json; charset=UTF-8~C~C~C~C" #\return #\linefeed #\return #\linefeed)
+          (format s "~A~C~C" metadata #\return #\linefeed)
+          
+          ;; Part 2: The File
+          (format s "--~A~C~C" boundary #\return #\linefeed)
+          (format s "Content-Type: ~A~C~C~C~C" mime-type #\return #\linefeed #\return #\linefeed)
+          (write-sequence (flexi-streams:octets-to-string file-bytes :external-format :latin-1) s)
+          
+          ;; End
+          (format s "~C~C--~A--~C~C" #\return #\linefeed boundary #\return #\linefeed))))
+
+  (multiple-value-bind (body status)
+      (drakma:http-request simple-url
+                           :method :post
+                           :content-type (format nil "multipart/related; boundary=~A" boundary)
+                           :content multipart-content)
+    (parse-gemini-upload-response body status)))
+	
+    #+nil(let ((multipart-content 
+				 (with-output-to-string (s)
+				   (format s "--~A~%" boundary)
+				   (format s "Content-Type: application/json; charset=UTF-8~%~%")
+				   (format s "~A~%" metadata)
+				   (format s "--~A~%" boundary)
+				   (format s "Content-Type: ~A~%~%" mime-type)
+				   ;; Write binary as latin-1 to preserve octets in string-based POST
+				   (write-sequence (flexi-streams:octets-to-string file-bytes :external-format :latin-1) s)
+				   (format s "~%--~A--~%" boundary))))
+
+		   (multiple-value-bind (body status)
+			   (drakma:http-request simple-url
+									:method :post
+									:content-type (format nil "multipart/related; boundary=~A" boundary)
+									:content multipart-content)
+			 (parse-gemini-upload-response body status)))))
+
+#+nil
 (defun upload-file-to-gemini (file-path mime-type)
   "Uploads a file to Gemini using the Resumable protocol via *static-api-key*."
   (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   *tag*) :hour)  
@@ -263,15 +400,26 @@
            (display-name (format nil "up-~a" (get-universal-time)))
            (file-bytes (read-file-to-octets file-path))
            (auth-headers `(("x-goog-api-key" . ,(or api-key ""))))
-           (metadata (jsown:to-json `(:obj ("file" . (:obj ("display_name" . ,display-name)))))))
-
+		   (metadata (jsown:to-json 
+					  `(:obj ("file" . (:obj ("displayName" . ,display-name)))
+							 ("mimeType" . ,mime-type))))
+           #+nil (metadata (jsown:to-json 
+							`(:obj ("file" . (:obj ("displayName" . ,display-name)
+												   ("mimeType"    . ,mime-type))))))
+		   )
+	  (xlg :thinking-log "base upload url ~s init-url ~s~%display name ~s file bytes length ~s~% auth-headers ~s metadata ~s~% mime-type ~s"
+ 		   base-upload-url     init-url     display-name (length file-bytes)       auth-headers    metadata      mime-type)
+	  (break "stuff?")
       (unless api-key (error "Upload requires *static-api-key*."))
 
       (multiple-value-bind (body status resp-headers)
-          (drakma:http-request init-url :method :post 
+		  (drakma:http-request init-url :method :post 
 										:content metadata 
 										:content-type "application/json"
-										:additional-headers auth-headers)
+										;; ADD THIS HEADER:
+										:additional-headers (append auth-headers 
+																	`(("X-Goog-Upload-Header-Content-Type" . ,mime-type))))
+        
 		(let ((upload-id-url (or (cdr (assoc :location resp-headers)) 
 								 (cdr (assoc :x-goog-upload-url resp-headers)))))
           (cond
