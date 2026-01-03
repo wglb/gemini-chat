@@ -124,7 +124,7 @@ Returns the text string or NIL if not found."
            (xlg :thinking-log "~&API Error [~a] ~a: ~a" code status message)
 		   (xlgt :error-log "~&API Error [~a] ~a: ~a" code status message)
            (xlgt :answer-log "~&API Error [~a] ~a: ~a" code status message)
-           
+           (break "what is happening")
            ;; Return nil to indicate failure
            nil))
         
@@ -147,7 +147,7 @@ Returns the text string or NIL if not found."
                                  (progn
                                    (xlg :answer-log "~&Raw answer: ~a" text)
                                    (setf text (string-trim '(#\Space #\Tab #\Newline) text))
-                                   (format t "~%~a~%" text)
+                                   ;;(format t "~%~a~%" text) ;; HMMM this is needed if we are interactive. TODO
                                    (if *run-out-s*
                                        (format *run-out-s* "~%~a~%" text))
                                    text)
@@ -186,51 +186,32 @@ Returns the text string or NIL if not found."
     (format nil "--- Context Files --~%~a~%--- End Context Files --~%" ctx-content)))
 
 (defun assemble-input-files-prompt (input-files exit-on-error)
-  "Reads and assembles the content of input files into a prompt section, handling common encoding errors."
-  (xlg :thinking-log "aifp: input ~s exit-on-error ~s" input-files exit-on-error)
-  (let ((prompt-list nil)
+  (declare (ignorable exit-on-error))
+  (let ((text-segments nil)
+        (blob-ids nil)
         (all-files-read-ok t))
-    (when input-files
-      (dolist (file-path input-files)
-        ;; Define all local variables here to ensure they are visible to the handler-case
-        ;; FINAL FIX: Use (format nil "~A" file-path) to force the corrupted PATHNAME 
-        ;; object into a safe string, which is then used for all file operations.
-        (let ((native-file-path (uiop:ensure-pathname file-path))
-              (file-content nil))
-          (handler-case
-              ;; 1. Try reading with the default encoding (usually UTF-8)
-              ;; Use the safe string for file existence check
-              (if (uiop:file-exists-p native-file-path)
-                  ;; Use SETF to assign the value to the outer-scoped variable
-                  ;; Use the safe string for file reading (default)
-                  (setf file-content (uiop:read-file-string native-file-path))
-                  (setf file-content nil))
-            
-            ;; 2. Catch the specific decoding error (UTF-16LE detected)
-            (sb-int:stream-decoding-error (e) 
-              (declare (ignore e))
-              (xlgt :error-log "aifp: Retrying ~a with :UTF-16LE due to decoding error." native-file-path) 
-              ;; Use the safe string for file reading (retry)
-              (setf file-content (uiop:read-file-string native-file-path :external-format :utf-16le)))
-            
-            ;; 3. Catch all other file errors (FileNotFound, permissions, etc.)
-            (error (c) 
-              (declare (ignore c))
-              (setf all-files-read-ok nil)
-              (xlgt :error-log "aifp: Failed to read input file: ~a" native-file-path)
-              (if exit-on-error
-                  (return-from assemble-input-files-prompt (values nil nil)))
-              ;; Ensure file-content is NIL on unrecoverable error
-              (setf file-content nil)))
+    (dolist (file-path input-files)
+      (cond 
+        ;; NEW: Separate blob-ids from the text stream
+        ((and (stringp file-path) (alexandria:starts-with-subseq "files/" file-path))
+         (push file-path blob-ids))
+        
+        (t ;; Standard local file reading
+         (let ((native-file-path (uiop:ensure-pathname file-path))
+               (file-content nil))
+           (handler-case
+               (setf file-content (uiop:read-file-string native-file-path))
+             (error () (setf all-files-read-ok nil)))
+           (when file-content
+             (push (format nil "===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]===" 
+                           native-file-path file-content native-file-path) 
+                   text-segments))))))
+    ;; Return three values: The text prompt, the list of blobs, and the status
+    (values (format nil "~{~a~%~%~}" (nreverse text-segments))
+            all-files-read-ok
+            (nreverse blob-ids))))
 
-          ;; Check if file content was successfully read (either first try or retry)
-          (if file-content
-              (push (format nil "===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]==="
-                            native-file-path
-                            file-content
-                            native-file-path)
-                    prompt-list)))))
-    (values (format nil "~{~a~%~%~}" (nreverse prompt-list)) all-files-read-ok)))
+
 
 (defun assemble-user-prompt (prompt)
   "Formats the user's initial prompt."
@@ -238,54 +219,58 @@ Returns the text string or NIL if not found."
     (format nil "My prompt: ~a" prompt)))
 
 
-(defun build-full-prompt (ctx-content input-files prompt exit-on-error)
-  "Constructs the complete prompt by combining all sections."
-  (let ((full-prompt-list nil))
-	(multiple-value-bind (input-files-string success-p)
-		(assemble-input-files-prompt input-files exit-on-error)
-	  (unless success-p
-		(return-from build-full-prompt (values nil nil)))
-	  (when input-files-string
-		(push input-files-string full-prompt-list)) ; PUSH Input Files FIRST (will be FIRST after reverse)
-	  (when ctx-content
-		(push (assemble-context-prompt ctx-content) full-prompt-list)) ; PUSH Context SECOND (will be SECOND after reverse)
-	  (when prompt
-		(push (assemble-user-prompt prompt) full-prompt-list))
-	  (let ((assembled-prompt (format nil "~{~a~%~%~}" (nreverse full-prompt-list))))
-		(xlg :thinking-log "size of assembled-prompt ~s" (length assembled-prompt))
-		(xlg :thinking-log "~&########################################Full assembled prompt for Gemini:~%~a~%^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^" assembled-prompt)
-		(values assembled-prompt t)))))
+(defun build-full-prompt (context input-files prompt-text exit-on-error)
+  "Combines context, files, and task prompt. Passes blob-ids through."
+  (multiple-value-bind (files-string success-p blob-ids)
+      (assemble-input-files-prompt input-files exit-on-error)
+    (let ((full-text 
+            (if context
+                (format nil "CONTEXT:~%~a~%~%FILES:~%~a~%~%TASK:~%~a" 
+                        context files-string prompt-text)
+                (format nil "FILES:~%~a~%~%TASK:~%~a" 
+                        files-string prompt-text))))
+      (values full-text success-p blob-ids))))
 
-(defun gem-conv (initial-prompt save single-shot exit-on-error &key (model "gemini-2.5-pro"))
-  "Handles a single conversation turn with Gemini. 'initial-prompt' is the first message."
+
+(defun make-file-part (file-id)
+  (let ((full-uri (if (alexandria:starts-with-subseq "https://" file-id)
+                      file-id
+                      (format nil "https://generativelanguage.googleapis.com/v1beta/~a" file-id))))
+    `(:obj ("file_data" . (:obj #+nil ("mime_type" . "application/octet-stream")
+								("mime_type" . "text/plain")
+                                ("file_uri" . ,full-uri))))))
+
+(defun gem-conv (initial-prompt save single-shot exit-on-error &key (model "gemini-2.5-pro") (blob-ids nil))
+  "Handles a turn. Now supports separate blob-ids for correct File API usage."
   (declare (ignorable exit-on-error))
-  (let ((conversation-history (list (make-message-turn "user" (list (make-text-part initial-prompt))))))
+  ;; Construct parts: Start with the text, then add each blob as a file part
+  (let* ((parts (append (list (make-text-part initial-prompt))
+                        (mapcar #'make-file-part blob-ids)))
+         (conversation-history (list (make-message-turn "user" parts))))
+	;;(break "blob-ids ~s" blob-ids)
     (loop
-	  (let* ((parsed-json (api-req conversation-history  :model model)))
+      (let* ((parsed-json (api-req conversation-history :model model)))
         (when save
           (save-cmd (format nil ":save ~a" save)))
         (let ((answer (extract-txt parsed-json)))
           (when (jsown:keyp parsed-json "candidates")
             (push (make-message-turn "model" (list (make-text-part answer))) conversation-history))
           (unless (or (string= answer "quit") (string= answer ":quit") single-shot)
-       (format t "~&Single shot is ~s>> " single-shot)
+            (format t "~&Single shot is ~s>> " single-shot)
             (finish-output)
             (let ((user-input (read-line)))
               (when (or (string= user-input "quit") (string= user-input ":quit"))
                 (return))
               (let ((command (if (s/nz user-input)
-								 (string-trim '(#\Space #\Tab)
+                                 (string-trim '(#\Space #\Tab)
                                               (car (s-s user-input #\Space :rem-empty nil)))
-								 "")))
+                                 "")))
                 (cond
-                  ((string= command ":input")
-                   (input-cmd user-input))
-                  
-                  ((string= command ":save")
-                   (save-cmd user-input)) 
-                  
+                  ((string= command ":input") (input-cmd user-input))
+                  ((string= command ":save") (save-cmd user-input)) 
                   (t
-				   (push (make-message-turn "user" (list (make-text-part user-input))) conversation-history)))))))
+                   (push (make-message-turn "user" (list (make-text-part user-input))) 
+                         conversation-history)))))))
         (when single-shot (return))))))
 
 (defun save-cmd (out-to-user &key (if-exists :supersede))
@@ -306,9 +291,9 @@ Returns the text string or NIL if not found."
           #+nil (break "actual-path ~s ~s" actual-path file-path)
           (xlg :thinking-log "~&Opening save file: ~a" actual-path)
           (setf *run-out-s* (open actual-path :direction :output :if-does-not-exist :create :if-exists if-exists))
-          (format t "~&gchat: save-cmd: Now saving responses to: ~a~%" actual-path))
+          (xlgt :thinking-log "~&gchat: save-cmd: Now saving responses to: " actual-path))
       (error (c)
-        (xlgt :error-log "~&gchat: save-cmd: Failed to open file for saving: ~a" c)
+        (xlgt :error-log "~s~&gchat: save-cmd: Failed to open file for saving: ~a" c)
         (setf *run-out-s* nil)))))
 
 (defun input-cmd (user-input)
@@ -339,47 +324,56 @@ Returns the text string or NIL if not found."
             (format t "~&Failed to read context file: ~a~%" e))))
       (get-output-stream-string result))))
 
+
+(defvar *batch-output-stream* nil 
+  "Global stream for the 1.5M request JSONL export.")
+
+(defun write-batch-jsonl-line (prompt-text model output-path)
+  "Writes a Google-compliant JSONL line to the open *batch-output-stream*.
+   Uses the absolute OUTPUT-PATH as the unique ID for the harvester."
+  (declare (ignore model))
+  (let* ((custom-id (namestring (truename output-path)))
+         (json-line (jsown:to-json
+                     `(:obj ("custom_id" . ,custom-id)
+                            ("request" . (:obj ("contents" . ((:obj ("role" . "user")
+                                                                   ("parts" . ((:obj ("text" . ,prompt-text)))))))
+                                               ("generationConfig" . (:obj ("temperature" . 0.0)))))))))
+    (if (and *batch-output-stream* (open-stream-p *batch-output-stream*))
+        (progn
+          (format *batch-output-stream* "~A~%" json-line)
+          (finish-output *batch-output-stream*))
+        (error "Batch output stream is not open. Bind *batch-output-stream* before running."))))
+
 (defun run-chat-with-kw (&key
                            (gemini-model "gemini-2.5-pro")
                            (context "context.txt")
                            (save "")
+						   (tag "kw")
+                           (batch-mode nil)
                            (input-files nil)
                            (exit-on-error nil)
                            (single-shot nil)
                            (remaining-args nil))
-  (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   *tag*) :hour)  
-                        (:answer-log   (format nil "~a-the-answer.log" *tag*) :hour)
-                        (:token-log    (format nil "~a-token.tkn"      *tag*) :ymd)
-                        (:error-log    (format nil "~a-error.log"      *tag*) :hour))
-    (format t " log files opened~%")
-	(let* ((prompt (string-trim '(#\Space #\Tab #\Newline) (format nil "~{~a~^ ~}" remaining-args))))
-      (let* ((actual-context-files (if context
-                                       (if (atom context)
-                                           (list context)
-                                           context)
-                                       (let ((default-ctx (get-default-context-file)))
-										 (if default-ctx (list default-ctx) nil))))
-			 (ctx-content (proc-ctx-files actual-context-files)))
-		(xlg :thinking-log
-			 (format nil
-					 "======================================actual-context ~s ctx-context ~s~%__________________________________________________"
-					 actual-context-files ctx-content )
-			 :timestamp t)
-		(when (or (s/nz prompt) input-files context)
-          (multiple-value-bind (assembled-prompt success-p)
-              (build-full-prompt ctx-content input-files prompt exit-on-error)
-			(xlg :thinking-log "gchat::run-chat-with-kw: prompt ~s success ~s" assembled-prompt success-p)
-			(unless success-p
-              (format t "~&gchat::run-chat-with-kw: Failed to assemble initial prompt. Exiting.~%")
-              (return-from run-chat-with-kw nil))
-			(unwind-protect
-				 (progn
-                   (format t "~&Sending request to Gemini...~%")
-                   (gem-conv assembled-prompt save single-shot exit-on-error :model gemini-model))
-              ;; Ensure output stream is closed on exit
-              (when *run-out-s*
-				(format t "~&gchat::run-chat-with-kw: Closing save file: ~a~%" (file-namestring (pathname *run-out-s*)))
-				(close *run-out-s*)
-				(setf *run-out-s* nil))))))
-      (format t "~&Exiting.~%"))))
+  (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   tag) :hour)  
+                        (:answer-log   (format nil "~a-the-answer.log" tag) :hour)
+                        (:token-log    (format nil "~a-token.tkn"      tag) :ymd)
+                        (:error-log    (format nil "~a-error.log"      tag) :hour))
+	(let ((prompt-text (car remaining-args)))
+      (if batch-mode
+          (write-batch-jsonl-line prompt-text gemini-model save)
+          ;; FIXED: Use the internal gem-conv/build-full-prompt logic 
+          ;; instead of the undefined 'perform-live-gemini-chat'
+		  ;; Inside run-chat-with-kw
+		  (multiple-value-bind (assembled-prompt success-p blob-ids)
+			  (build-full-prompt context input-files prompt-text exit-on-error)
+			(if success-p
+				;; Pass the blobs into gem-conv so they become real 'file_data' parts
+				(gem-conv assembled-prompt save single-shot exit-on-error 
+						  :model gemini-model 
+						  :blob-ids blob-ids)
+				(when exit-on-error 
+				  (error "Failed to assemble prompt for ~A" save))))))))
+
+
+
 
