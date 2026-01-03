@@ -3,12 +3,13 @@
 (declaim (optimize (speed 0) (safety 3) (debug 3) (space 0)))
 
 (defparameter *gemini-pricing*
-  '((:GEMINI-3.0-PRO-PREVIEW (:INPUT-COST-PER-M 2.00) (:OUTPUT-COST-PER-M 12.00))
-    (:GEMINI-3-PRO-PREVIEW   (:INPUT-COST-PER-M 2.00) (:OUTPUT-COST-PER-M 12.00))
-    (:GEMINI-2.5-PRO         (:INPUT-COST-PER-M 1.25) (:OUTPUT-COST-PER-M 10.00))
-    (:GEMINI-2.5-FLASH       (:INPUT-COST-PER-M 0.30) (:OUTPUT-COST-PER-M 2.50))
-    (:N/A                    (:INPUT-COST-PER-M 0.30) (:OUTPUT-COST-PER-M 2.50)))
-  "Standard pricing (USD per 1 Million tokens) for Gemini models." )
+  '((:GEMINI-3.0-PRO-PREVIEW . ((:INPUT-COST-PER-M 2.0) (:OUTPUT-COST-PER-M 12.0)))
+    (:GEMINI-3-PRO-PREVIEW .   ((:INPUT-COST-PER-M 2.0) (:OUTPUT-COST-PER-M 12.0)))
+    (:GEMINI-2.5-PRO .         ((:INPUT-COST-PER-M 1.25) (:OUTPUT-COST-PER-M 10.0)))
+    (:GEMINI-2.5-FLASH .       ((:INPUT-COST-PER-M 0.3) (:OUTPUT-COST-PER-M 2.5)))
+    ;; Added for the new Lite model
+    (:GEMINI-2.5-FLASH-LITE .  ((:INPUT-COST-PER-M 0.1) (:OUTPUT-COST-PER-M 0.4)))
+    (:N/A .                    ((:INPUT-COST-PER-M 0.3) (:OUTPUT-COST-PER-M 2.5)))))
 
 (defun get-pricing-data (model-keyword &optional (pricing-list *gemini-pricing*))
   "Retrieves the pricing alist for a given model keyword."
