@@ -81,7 +81,7 @@
          (uri-parts (format nil "models/~a:generateContent" model))
          (json-payload-lisp-object (make-api-request-payload msgs))
          (json-payload-string (jsown:to-json json-payload-lisp-object)))
-    (xlg :thinking-log "~&Making API request to: ~a" uri-parts)
+    (xlg :thinking-log "~&Making API request to: ~a" uri-parts :timestamp t)
     (xlg :thinking-log "JSON string being sent: ~a" json-payload-string)
     (handler-case
         (let ((result-list (do-api-request uri-parts json-payload-string :post)))
@@ -122,10 +122,8 @@ Returns the text string or NIL if not found."
                 (status (jsown:val-safe the-err "status")))
            
            (xlg :thinking-log "~&API Error [~a] ~a: ~a" code status message)
-		   (xlgt :error-log "~&API Error [~a] ~a: ~a" code status message)
+		   (xlgt :error-log "~&API Error [~a] ~a: ~a" code status message :timestamp t)
            (xlgt :answer-log "~&API Error [~a] ~a: ~a" code status message)
-           (break "what is happening")
-           ;; Return nil to indicate failure
            nil))
         
         ((jsown:keyp parsed-json "candidates")
@@ -236,8 +234,7 @@ Returns the text string or NIL if not found."
   (let ((full-uri (if (alexandria:starts-with-subseq "https://" file-id)
                       file-id
                       (format nil "https://generativelanguage.googleapis.com/v1beta/~a" file-id))))
-    `(:obj ("file_data" . (:obj #+nil ("mime_type" . "application/octet-stream")
-								("mime_type" . "text/plain")
+    `(:obj ("file_data" . (:obj ("mime_type" . "text/plain")
                                 ("file_uri" . ,full-uri))))))
 
 (defun gem-conv (initial-prompt save single-shot exit-on-error &key (model "gemini-2.5-pro") (blob-ids nil))
