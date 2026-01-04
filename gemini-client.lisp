@@ -98,7 +98,7 @@
   (let* ((auth-info (get-auth-info))
          (headers (acons "Accept" "application/json" nil))
          (retries 0)
-         (max-retries 5)
+         (max-retries 8)
          (uri (concatenate 'string *gemini-endpoint* "/" uri-parts)))
 
     ;; Authentication setup (remains outside the retry loop)
@@ -131,7 +131,7 @@
               (our-json nil)
               (content-type (cdr (assoc :content-type headers))))
           
-          (xlg :thinking-log (format nil "Status: ~a (Attempt ~a)" status-code (1+ retries)))
+          (xlg :thinking-log (format nil "Status: ~a (Attempt ~a)" status-code (1+ retries)) :timestamp t)
 
           (cond
             ;; 429: Too Many Requests - Trigger Backoff/Retry
@@ -139,7 +139,7 @@
              (when (>= retries max-retries)
                ;; FIX: Max retries reached. Return the response to allow the detailed
                ;; JSON error message to be parsed by the calling function.
-               (xlg :thinking-log "API Quota exceeded after ~a retries. Returning raw error response for parsing." max-retries)
+               (xlg :thinking-log "API Quota exceeded after ~a retries. Returning raw error response for parsing." max-retries :timestamp t)
                
                ;; Attempt to parse JSON before returning, just like success/other error cases
                (setf our-json (if (and content-type (search "application/json" content-type :test #'char-equal))
@@ -151,7 +151,7 @@
              (incf retries)
              (let ((wait-time (+ (expt 2 retries) (random 1.0))))
                (xlg :thinking-log (format nil "Quota Exceeded (429). Retrying in ~a seconds (~a/~a)." 
-                                          (round wait-time) retries max-retries))
+                                          (round wait-time) retries max-retries) :timestamp t)
                (sleep wait-time)))
 
             ;; 200-399: Success or Redirects - Process result and exit loop
@@ -166,7 +166,7 @@
             ;; 400+: General Error - Return the error response for parsing
             (t
              ;; For all other non-2xx errors, return the response for detailed parsing
-             (xlg :thinking-log (format nil "API Request failed with status code ~a. Returning raw error response for parsing." status-code))
+             (xlg :thinking-log (format nil "API Request failed with status code ~a. Returning raw error response for parsing." status-code) :timestamp t)
              ;; Parse JSON if content type is application/json
              (if (and content-type (search "application/json" content-type :test #'char-equal))
                  (setf our-json (jsown:parse body)))
@@ -254,7 +254,7 @@
 (defun parse-gemini-upload-response (body status)
   (let* ((resp-str (if (stringp body) body (flexi-streams:octets-to-string body)))
          (json (jsown:parse resp-str)))
-    (if (and (>= status 200) (< status 300))
+	(if (and (>= status 200) (< status 300))
         (jsown:val (if (jsown:keyp json "file") (jsown:val json "file") json) "name")
         (error "Gemini Upload Failed (~a): ~a" status resp-str))))
 
@@ -284,155 +284,6 @@
                              :preserve-uri t)
       ;; This should now return a 200/201 and the JSON containing the 'name' field
       (parse-gemini-upload-response body status))))
-
-#+nil
-(defun upload-file-to-gemini (file-path mime-type)
-  "Uploads a file and returns the blob-id (e.g., files/...) on success."
-  (ensure-gemini-init)
-  (let* ((api-key *static-api-key*)
-         (simple-url (format nil "https://generativelanguage.googleapis.com/upload/v1beta/files?key=~a" api-key))
-         (display-name (format nil "up-~a" (get-universal-time)))
-         (file-bytes (read-file-to-octets file-path))
-         ;; Ensure metadata is nested inside the "file" object per API spec
-         (metadata (jsown:to-json 
-                    `(:obj ("file" . (:obj ("displayName" . ,display-name)
-                                           ("mimeType"    . ,mime-type))))))
-         (boundary "LispBoundary")
-         (crlf (format nil "~C~C" #\return #\linefeed)))
-    
-    (unless api-key (error "Upload requires *static-api-key*."))
-
-    ;; Build the payload as a binary sequence to prevent encoding corruption
-    (let ((payload 
-			(flexi-streams:with-output-to-sequence (s :element-type '(unsigned-byte 8))
-              ;; Part 1: JSON Metadata
-              (write-sequence (flexi-streams:string-to-octets (format nil "--~A~A" boundary crlf) :external-format :utf-8) s)
-              (write-sequence (flexi-streams:string-to-octets (format nil "Content-Type: application/json; charset=UTF-8~A~A" crlf crlf) :external-format :utf-8) s)
-              (write-sequence (flexi-streams:string-to-octets (format nil "~A~A" metadata crlf) :external-format :utf-8) s)
-             
-              ;; Part 2: The File Content
-              (write-sequence (flexi-streams:string-to-octets (format nil "--~A~A" boundary crlf) :external-format :utf-8) s)
-              ;; Note the double CRLF after the header to separate it from the binary data
-              (write-sequence (flexi-streams:string-to-octets (format nil "Content-Type: ~A~A~A" mime-type crlf crlf) :external-format :utf-8) s)
-              (write-sequence file-bytes s) 
-             
-              ;; Termination: Closing boundary must have trailing dashes
-              (write-sequence (flexi-streams:string-to-octets (format nil "~A--~A--" crlf boundary) :external-format :utf-8) s))))
-
-      (multiple-value-bind (body status)
-          (drakma:http-request simple-url
-                               :method :post
-                               :content-type (format nil "multipart/related; boundary=~A" boundary)
-                               :content payload)
-        ;; On status 200, parse-gemini-upload-response extracts the "files/..." ID string
-        (parse-gemini-upload-response body status)))))
-
-#+nil
-(defun upload-file-to-gemini (file-path mime-type)
-  "Uploads a file to Gemini using the Multipart protocol to force mimeType."
-  (ensure-gemini-init)
-  (let* ((api-key *static-api-key*)
-         (base-upload-url (cl-ppcre:regex-replace "googleapis.com/" *gemini-endpoint* "googleapis.com/upload/"))
-         (simple-url (format nil "~a/files?key=~a" base-upload-url api-key))
-         (display-name (format nil "up-~a" (get-universal-time)))
-         (file-bytes (read-file-to-octets file-path))
-         ;; Ensure metadata uses CamelCase for AI Studio
-         (metadata (jsown:to-json 
-                    `(:obj ("file" . (:obj ("displayName" . ,display-name)
-                                           ("mimeType"    . ,mime-type)))))))
-    
-    (unless api-key (error "Upload requires *static-api-key*."))
-
-    ;; This single block replaces BOTH previous multiple-value-bind sections
-	(let* ((boundary "LispBoundary") ;; No dashes here
-       (multipart-content 
-        (with-output-to-string (s)
-          ;; Part 1: Metadata
-          (format s "--~A~C~C" boundary #\return #\linefeed)
-          (format s "Content-Type: application/json; charset=UTF-8~C~C~C~C" #\return #\linefeed #\return #\linefeed)
-          (format s "~A~C~C" metadata #\return #\linefeed)
-          
-          ;; Part 2: The File
-          (format s "--~A~C~C" boundary #\return #\linefeed)
-          (format s "Content-Type: ~A~C~C~C~C" mime-type #\return #\linefeed #\return #\linefeed)
-          (write-sequence (flexi-streams:octets-to-string file-bytes :external-format :latin-1) s)
-          
-          ;; End
-          (format s "~C~C--~A--~C~C" #\return #\linefeed boundary #\return #\linefeed))))
-
-  (multiple-value-bind (body status)
-      (drakma:http-request simple-url
-                           :method :post
-                           :content-type (format nil "multipart/related; boundary=~A" boundary)
-                           :content multipart-content)
-    (parse-gemini-upload-response body status)))
-	
-    #+nil(let ((multipart-content 
-				 (with-output-to-string (s)
-				   (format s "--~A~%" boundary)
-				   (format s "Content-Type: application/json; charset=UTF-8~%~%")
-				   (format s "~A~%" metadata)
-				   (format s "--~A~%" boundary)
-				   (format s "Content-Type: ~A~%~%" mime-type)
-				   ;; Write binary as latin-1 to preserve octets in string-based POST
-				   (write-sequence (flexi-streams:octets-to-string file-bytes :external-format :latin-1) s)
-				   (format s "~%--~A--~%" boundary))))
-
-		   (multiple-value-bind (body status)
-			   (drakma:http-request simple-url
-									:method :post
-									:content-type (format nil "multipart/related; boundary=~A" boundary)
-									:content multipart-content)
-			 (parse-gemini-upload-response body status)))))
-
-#+nil
-(defun upload-file-to-gemini (file-path mime-type)
-  "Uploads a file to Gemini using the Resumable protocol via *static-api-key*."
-  (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   *tag*) :hour)  
-                        (:answer-log   (format nil "~a-the-answer.log" *tag*) :hour)
-                        (:token-log    (format nil "~a-token.tkn"      *tag*) :ymd)
-                        (:error-log    (format nil "~a-error.log"      *tag*) :hour))
-    (format t " log files opened~%")
-	(ensure-gemini-init)
-	(let* ((api-key *static-api-key*)
-           (base-upload-url (cl-ppcre:regex-replace "googleapis.com/" *gemini-endpoint* "googleapis.com/upload/"))
-           (init-url (format nil "~a/files?uploadType=resumable" base-upload-url))
-           (display-name (format nil "up-~a" (get-universal-time)))
-           (file-bytes (read-file-to-octets file-path))
-           (auth-headers `(("x-goog-api-key" . ,(or api-key ""))))
-		   (metadata (jsown:to-json 
-					  `(:obj ("file" . (:obj ("displayName" . ,display-name)))
-							 ("mimeType" . ,mime-type))))
-           #+nil (metadata (jsown:to-json 
-							`(:obj ("file" . (:obj ("displayName" . ,display-name)
-												   ("mimeType"    . ,mime-type))))))
-		   )
-	  (xlg :thinking-log "base upload url ~s init-url ~s~%display name ~s file bytes length ~s~% auth-headers ~s metadata ~s~% mime-type ~s"
- 		   base-upload-url     init-url     display-name (length file-bytes)       auth-headers    metadata      mime-type)
-	  (break "stuff?")
-      (unless api-key (error "Upload requires *static-api-key*."))
-
-      (multiple-value-bind (body status resp-headers)
-		  (drakma:http-request init-url :method :post 
-										:content metadata 
-										:content-type "application/json"
-										;; ADD THIS HEADER:
-										:additional-headers (append auth-headers 
-																	`(("X-Goog-Upload-Header-Content-Type" . ,mime-type))))
-        
-		(let ((upload-id-url (or (cdr (assoc :location resp-headers)) 
-								 (cdr (assoc :x-goog-upload-url resp-headers)))))
-          (cond
-			((and (member status '(200 201)) upload-id-url)
-			 (multiple-value-bind (final-body final-status)
-				 (drakma:http-request upload-id-url :method :post
-													:content file-bytes
-													:additional-headers (append auth-headers 
-																				`(("Content-Type" . ,mime-type))))
-               (parse-gemini-upload-response final-body final-status)))
-			(t 
-			 (error "Upload Initiation Failed (Status ~a). Path: ~a~%Response: ~a" 
-					status init-url (flexi-streams:octets-to-string body)))))))))
 
 (defun list-gemini-files ()
   "Lists all files currently stored in the Gemini project using the Static API Key."
@@ -514,14 +365,14 @@
         (file-id nil)
         (results nil))
     
-    (xlg :thinking-log "Starting security scan. Uploading file once...")
+    (xlg :thinking-log "Starting security scan. Uploading file once..." :timestamp t)
     ;; Step 1: Upload the large file (Requires implementation in gemini-client.lisp)
     (setf file-id (upload-file-to-gemini file-to-scan mime-type)) 
     (xlg :thinking-log "File uploaded successfully. ID: ~a" file-id)
     ;; Step 2: Loop through all 28 questions, referencing the uploaded file ID
     (loop for question in questions-list
           for i from 1
-          do (xlg :thinking-log "Processing question ~a of ~a..." i (length questions-list))
+          do (xlg :thinking-log "Processing question ~a of ~a..." i (length questions-list) :timstamp 1)
              (let ((response-candidates 
                      (call-gemini-model model-name 
                                         question 
