@@ -216,7 +216,6 @@ Returns the text string or NIL if not found."
   (when (s/nz prompt)
     (format nil "My prompt: ~a" prompt)))
 
-
 (defun build-full-prompt (context input-files prompt-text exit-on-error)
   "Combines context, files, and task prompt. Passes blob-ids through."
   (multiple-value-bind (files-string success-p blob-ids)
@@ -345,7 +344,7 @@ Returns the text string or NIL if not found."
                            (gemini-model "gemini-2.5-pro")
                            (context "context.txt")
                            (save "")
-						   (tag "kw")
+                           (tag "kw")
                            (batch-mode nil)
                            (input-files nil)
                            (exit-on-error nil)
@@ -355,21 +354,24 @@ Returns the text string or NIL if not found."
                         (:answer-log   (format nil "~a-the-answer.log" tag) :hour)
                         (:token-log    (format nil "~a-token.tkn"      tag) :ymd)
                         (:error-log    (format nil "~a-error.log"      tag) :hour))
-	(let ((prompt-text (car remaining-args)))
-      (if batch-mode
-          (write-batch-jsonl-line prompt-text gemini-model save)
-          ;; FIXED: Use the internal gem-conv/build-full-prompt logic 
-          ;; instead of the undefined 'perform-live-gemini-chat'
-		  ;; Inside run-chat-with-kw
-		  (multiple-value-bind (assembled-prompt success-p blob-ids)
-			  (build-full-prompt context input-files prompt-text exit-on-error)
-			(if success-p
-				;; Pass the blobs into gem-conv so they become real 'file_data' parts
-				(gem-conv assembled-prompt save single-shot exit-on-error 
-						  :model gemini-model 
-						  :blob-ids blob-ids)
-				(when exit-on-error 
-				  (error "Failed to assemble prompt for ~A" save))))))))
+    (let ((prompt-text (car remaining-args)))
+      (multiple-value-bind (assembled-prompt success-p blob-ids)
+          (build-full-prompt context input-files prompt-text exit-on-error)
+        (cond ((and success-p batch-mode) ;; Branch 1: Success + Batch Mode
+           (write-batch-jsonl-line assembled-prompt gemini-model save))
+			  
+          (success-p ;; Branch 2: Success + Live Mode
+           (gem-conv assembled-prompt save single-shot exit-on-error 
+                     :model gemini-model 
+                     :blob-ids blob-ids))
+
+          (exit-on-error ;; Branch 3: Failure + Exit on Error flag set
+           (error "Failed to assemble prompt for ~A" save))
+		  
+          (t ;; Branch 4: Failure (Silent or just logging)
+           (xlg :error-log "Prompt assembly failed for ~A, but exit-on-error is nil." save)))))))
+
+
 
 
 
