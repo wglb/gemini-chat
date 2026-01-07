@@ -361,6 +361,7 @@
 ;;; gemini-chat-lib.lisp (Conceptual new function for batch scanning)
 
 (defun run-security-scan-batch (file-to-scan questions-list model-name)
+  "This is synchrous, grouping questions into a batch. Not the asyncronous mode."
   (let ((mime-type "text/plain")		; Assuming code is text/plain
         (file-id nil)
         (results nil))
