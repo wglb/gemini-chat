@@ -1,0 +1,38 @@
+
+The short answer is **yes, quotas are separate for different model types (e.g., Gemini 1.5 Flash vs. Gemini 1.5 Pro).**
+
+However, how they are separated depends on whether you are distinct versions of the *same* model family.
+
+Here is the detailed breakdown of how RPD (Requests Per Day), RPM (Requests Per Minute), and TPM (Tokens Per Minute) work across models.
+
+### 1. Distinct Models (e.g., Flash vs. Pro)
+Quotas are **completely separate**.
+*   **Usage:** If you max out your TPM limit on **Gemini 1.5 Flash**, it does **not** consume your quota for **Gemini 1.5 Pro**.
+*   **Strategy:** This allows you to implement "fallback" or "cascading" strategies. If you hit the rate limit on the Pro model, your code can automatically switch to the Flash model (which usually has much higher limits) to handle the excess traffic.
+
+### 2. Model Versions (e.g., 001 vs. 002)
+This can vary by platform (AI Studio vs. Vertex AI), but generally, **versions of the same model family share a quota.**
+*   If you use `gemini-1.5-pro-001` and `gemini-1.5-pro-002`, they usually pull from the same "Gemini 1.5 Pro" quota bucket for your project.
+
+### 3. The Limits by Platform
+The rules differ slightly depending on which Google interface you are using:
+
+#### Google AI Studio (API Key)
+In AI Studio, the distinction is very rigid.
+*   **Free Tier:** You have specific limits for Flash (e.g., 15 RPM) and separate limits for Pro (e.g., 2 RPM). Using one does not impact the remaining requests available for the other.
+*   **Paid Tier:** The Pay-as-you-go limits are defined per model.
+
+#### Google Cloud Vertex AI
+In the enterprise environment, quotas are managed via the Google Cloud Quota console.
+*   **Per Region:** Quotas are separate per region. If you exhaust your Gemini 1.5 Pro quota in `us-central1`, you may still have quota available in `europe-west4`.
+*   **Quota Groups:** While Flash and Pro are distinct, they fall under the "Generative AI API." You must ensure you haven't hit a project-level global concurrent request limit, though hitting the specific model TPM/RPM limit is the most common bottleneck.
+
+### Summary Table
+
+| Metric                        | Shared between Flash & Pro? | Shared between Regions? |
+| :---                          | :---                        | :---                    |
+| **RPM (Requests Per Minute)** | **No** (Separate)           | **No** (Separate)       |
+| **TPM (Tokens Per Minute)**   | **No** (Separate)           | **No** (Separate)       |
+| **RPD (Requests Per Day)**    | **No** (Separate)           | **No** (Separate)       |
+
+**Recommendation:** If you are building an app with heavy traffic, do not rely on a single model. Set up logic to route simple queries to **Flash** (to save the **Pro** TPM quota for complex tasks) and handle rate-limit errors by failing over to a different model or a different region.
