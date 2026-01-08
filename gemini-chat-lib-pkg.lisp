@@ -13,5 +13,14 @@
   (:export #:run-chat-with-kw
 		   #:gemini-chat-lib-init
 		   #:get-key
+		   #:do-api-request
 		   #:upload-file-to-gemini
-		   #:delete-gemini-file))
+		   #:create-gemini-batch-job
+		   #:create-vertex-batch-job
+		   #:check-batch-job-status
+		   #:upload-to-gcs
+		   #:estimate-batch-cost
+		   #:monitor-security-job
+		   #:delete-gemini-file
+		   #:load-job-metadata
+		   #:save-job-metadata))
