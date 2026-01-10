@@ -219,133 +219,6 @@ Returns the text string or NIL if not found."
     (values (format nil "~{~a~%~%~}" (nreverse text-segments))
             all-files-read-ok
             (nreverse blob-ids))))
-#+nil
-(defun assemble-input-files-prompt (input-files exit-on-error)
-  (declare (ignorable exit-on-error))
-  (let ((text-segments nil)
-        (blob-ids nil)
-        (all-files-read-ok t))
-    (dolist (file-path input-files)
-      (cond 
-        ((and (stringp file-path) (alexandria:starts-with-subseq "files/" file-path))
-         (push file-path blob-ids))
-        
-        (t 
-         (let ((native-file-path (uiop:ensure-pathname file-path))
-               (file-content nil))
-           ;; Automatic encoding detection logic
-           (handler-case
-               ;; 1. Attempt standard UTF-8 read
-               (setf file-content (uiop:read-file-string native-file-path :external-format :utf-8))
-             (error (rc) 
-               ;; 2. On failure (like the #(255 254) BOM), retry with UTF-16
-			   (break "first handler error ~s" rc)
-               (handler-case
-                   (progn
-                     (xlg :thinking-log "Retrying ~A with :utf-16 due to decoding error." native-file-path)
-                     (setf file-content (uiop:read-file-string native-file-path :external-format :utf-16))
-					 (break "success on second handler"))
-                 (error (c)
-				   (break "error on second handler ~s" c)
-                   (xlg :error-log "Final read error on ~A: ~A" native-file-path c)
-                   (setf all-files-read-ok nil)))))
-
-           (when file-content
-             (push (format nil "===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]===" 
-                           native-file-path file-content native-file-path) 
-                   text-segments))))))
-    (values (format nil "~{~a~%~%~}" (nreverse text-segments))
-            all-files-read-ok
-            (nreverse blob-ids))))
-
-#+nil
-(defun assemble-input-files-prompt (input-files exit-on-error)
-  (declare (ignorable exit-on-error))
-  (let ((text-segments nil)
-        (blob-ids nil)
-        (all-files-read-ok t))
-    (dolist (file-path input-files)
-      (cond 
-        ((and (stringp file-path) (alexandria:starts-with-subseq "files/" file-path))
-         (push file-path blob-ids))
-        
-        (t 
-         (let ((native-file-path (uiop:ensure-pathname file-path))
-               (file-content nil))
-           (handler-case
-               ;; Specify :utf-16 to handle the #(255 254) BOM found in requirements.txt
-               (setf file-content (uiop:read-file-string native-file-path 
-                                                         :external-format :utf-16))
-             (error (c) 
-               ;; Log the specific error if decoding still fails
-               (xlg :error-log "Read error on ~A: ~A" native-file-path c)
-               (setf all-files-read-ok nil)))
-           (when file-content
-             (push (format nil "===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]===" 
-                           native-file-path file-content native-file-path) 
-                   text-segments))))))
-    (values (format nil "~{~a~%~%~}" (nreverse text-segments))
-            all-files-read-ok
-            (nreverse blob-ids))))
-
-#+nil
-(defun assemble-input-files-prompt (input-files exit-on-error)
-  (declare (ignorable exit-on-error))
-  (let ((text-segments nil)
-        (blob-ids nil)
-        (all-files-read-ok t))
-    (dolist (file-path input-files)
-      (cond 
-        ((and (stringp file-path) (alexandria:starts-with-subseq "files/" file-path))
-         (push file-path blob-ids))
-        
-        (t 
-         (let ((native-file-path (uiop:ensure-pathname file-path))
-               (file-content nil))
-           (handler-case
-               ;; Specify external format to handle BOM/decoding issues
-               (setf file-content (uiop:read-file-string native-file-path 
-                                                         :external-format :utf-8))
-             (error (c) 
-               (xlgt :error-log "Read error on ~A:~% ~A" native-file-path c)
-               (setf all-files-read-ok nil)))
-           (when file-content
-             (push (format nil "===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]===" 
-                           native-file-path file-content native-file-path) 
-                   text-segments))))))
-    (values (format nil "~{~a~%~%~}" (nreverse text-segments))
-            all-files-read-ok
-            (nreverse blob-ids))))
-#+nil
-(defun assemble-input-files-prompt (input-files exit-on-error)
-  (declare (ignorable exit-on-error))
-  (let ((text-segments nil)
-        (blob-ids nil)
-        (all-files-read-ok t))
-    (dolist (file-path input-files)
-      (cond 
-        ;; NEW: Separate blob-ids from the text stream
-        ((and (stringp file-path) (alexandria:starts-with-subseq "files/" file-path))
-         (push file-path blob-ids))
-        
-        (t ;; Standard local file reading
-         (let ((native-file-path (uiop:ensure-pathname file-path))
-               (file-content nil))
-           (handler-case
-               (setf file-content (uiop:read-file-string native-file-path))
-             (error (e)
-			   (setf all-files-read-ok nil)
-			   (break "why not read ok? ~s" e)))
-           (when file-content
-             (push (format nil "===BEGIN_FILE: [~a]===~%~a~%===END_FILE: [~a]===" 
-                           native-file-path file-content native-file-path) 
-                   text-segments))))))
-    ;; Return three values: The text prompt, the list of blobs, and the status
-    (values (format nil "~{~a~%~%~}" (nreverse text-segments))
-            all-files-read-ok
-            (nreverse blob-ids))))
-
-
 
 (defun assemble-user-prompt (prompt)
   "Formats the user's initial prompt."
@@ -422,7 +295,6 @@ Returns the text string or NIL if not found."
         (let ((actual-path (uiop:ensure-pathname (if (uiop:absolute-pathname-p file-path)
                                                      file-path
                                                      (uiop:merge-pathnames* file-path (uiop:getcwd))))))
-          #+nil (break "actual-path ~s ~s" actual-path file-path)
           (xlg :thinking-log "~&Opening save file: ~a" actual-path)
           (setf *run-out-s* (open actual-path :direction :output :if-does-not-exist :create :if-exists if-exists))
           (xlgt :thinking-log "~&gchat: save-cmd: Now saving responses to: " actual-path))
@@ -458,40 +330,16 @@ Returns the text string or NIL if not found."
             (format t "~&Failed to read context file: ~a~%" e))))
       (get-output-stream-string result))))
 
-
-(defun write-batch-jsonl-line (prompt-text model output-path stream)
-  "Writes the specific 'request' wrapper Vertex AI expects for Gemini."
+(defun write-batch-jsonl-line (custom-id prompt-text model output-path stream)
+  "Writes the 'custom_id' and 'request' wrapper Vertex AI expects for structured batch results."
   (declare (ignore model output-path))
   (let* ((json-line (jsown:to-json
                      `(:obj 
+                        ("custom_id" . ,custom-id) ;; metadata foreign key
                         ("request" . (:obj 
                                        ("contents" . ((:obj ("role" . "user")
                                                             ("parts" . ((:obj ("text" . ,prompt-text)))))))
                                        ("generationConfig" . (:obj ("temperature" . 0.0)))))))))
-    (format stream "~A~%" json-line)
-    (finish-output stream)))
-
-#+nil
-(defun write-batch-jsonl-line (prompt-text model output-path stream)
-  "Writes a Vertex AI compliant JSONL line to the provided STREAM."
-  (declare (ignore model output-path)) ;; output-path is no longer used in the line itself
-  (let* ((json-line (jsown:to-json
-                     `(:obj ("contents" . ((:obj ("role" . "user")
-                                                 ("parts" . ((:obj ("text" . ,prompt-text)))))))
-                            ("generationConfig" . (:obj ("temperature" . 0.0)))))))
-    (format stream "~A~%" json-line)
-    (finish-output stream)))
-
-#+nil
-(defun write-batch-jsonl-line (prompt-text model output-path stream)
-  "Writes a Google-compliant JSONL line to the provided STREAM."
-  (declare (ignore model))
-  (let* ((custom-id (namestring output-path))
-         (json-line (jsown:to-json
-                     `(:obj ("custom_id" . ,custom-id)
-                            ("request" . (:obj ("contents" . ((:obj ("role" . "user")
-																	("parts" . ((:obj ("text" . ,prompt-text)))))))
-                                               ("generationConfig" . (:obj ("temperature" . 0.0)))))))))
     (format stream "~A~%" json-line)
     (finish-output stream)))
 
@@ -504,6 +352,7 @@ Returns the text string or NIL if not found."
                            (input-files nil)
                            (batch-mode nil)
                            (batch-stream nil)
+						   (custom-id nil)
                            (remaining-args nil))
   "Orchestrates prompt assembly. Batch-mode redirects to batch-stream."
   (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   tag) :hour)  
@@ -514,31 +363,30 @@ Returns the text string or NIL if not found."
       ;; build-full-prompt signature: (context input-files prompt-text exit-on-error)
       (multiple-value-bind (assembled-prompt success-p blob-ids)
           (build-full-prompt context input-files prompt-text exit-on-error)
-		(cond 
-          (batch-mode
-           (cond
-			 ((not (and batch-stream (open-stream-p batch-stream)))
-              (error "Batch mode requested but :batch-stream is NIL or closed."))
-			 (success-p
-              (write-batch-jsonl-line assembled-prompt gemini-model save batch-stream)
-              (values t t))
-			 (exit-on-error
-              (error "Failed to assemble prompt for ~A" (or save "unknown file")))
-			 (t 
-              (values nil nil))))
+		(cond (batch-mode
+			   (cond ((not (and batch-stream (open-stream-p batch-stream)))
+					  (error "Batch mode requested but :batch-stream is NIL or closed."))
 
-          (success-p
-           ;; gem-conv signature: (initial-prompt save single-shot exit-on-error &key model blob-ids)
-           (let ((response (gem-conv assembled-prompt save t exit-on-error 
-									 :model gemini-model 
-									 :blob-ids blob-ids)))
-			 (values response t)))
+					 (success-p
+					  (write-batch-jsonl-line custom-id assembled-prompt gemini-model save batch-stream)
+					  (values t t))
 
-          (exit-on-error
-           (error "Failed to assemble prompt for live mode."))
+					 (exit-on-error
+					  (error "Failed to assemble prompt for ~A" (or save "unknown file")))
 
-          (t 
-           (values nil nil)))))))
+					 (t 
+					  (values nil nil))))
+			  (success-p ;; gem-conv signature: (initial-prompt save single-shot exit-on-error &key model blob-ids)
+			   (let ((response (gem-conv assembled-prompt save t exit-on-error 
+										 :model gemini-model 
+										 :blob-ids blob-ids)))
+				 (values response t)))
+
+			  (exit-on-error
+			   (error "Failed to assemble prompt for live mode."))
+
+			  (t 
+			   (values nil nil)))))))
 
 
 
