@@ -33,11 +33,10 @@
 (defun gemini-chat-lib-init (&key static-key service-account (tag "gemini-run"))
   "Initializes the library with cloud-specific credentials and starts the logging system."
   (setf *tag* tag)
-  (format t " log files opened for tag ~s~%" *tag*)
   (setf *static-api-key* (or static-key (uiop:getenv "GEMINI_API_KEY")))
   (setf *gemini-service-account* (or service-account (uiop:getenv "GEMINI_SERVICE_ACCOUNT")))
   (setf *gemini-lib-init-p* t)
-  (xlg :thinking-log "Gemini-chat-lib initialized for account ~a" 
+  (format t  "Gemini-chat-lib initialized for account ~a~%" 
 	   (or *gemini-service-account* "Static-Only"))
   t)
 
@@ -383,7 +382,7 @@
 
 (defun monitor-security-job (job-response)
   "Prints progress for a Vertex batch job object, handling string-to-number conversion for stats."
-  (with-open-log-files ((:monitor (format nil "job-status.log") :hour))
+  (w/logs  ((:monitor "job-status.log" :hms) (:error "job-status.err" :hms) (:thinking-log "job-status-thinking.log" :hms))
     (setf *use-vertex-auth* t)
     (let* ((job-name (jsown:val job-response "name"))
            (endpoint (format nil "https://us-central1-aiplatform.googleapis.com/v1/~a" job-name))
@@ -491,7 +490,7 @@
           project-id bucket-path    manifest-uri    manifest-filename)
 	(xlg :batch "payload~a" (jsown:to-json payload))
     (let ((ans (do-api-request endpoint (jsown:to-json payload) :post)))
-      (with-open-file (ans-fo (make-pathname :name (format nil "~a" (pathname-name manifest-filename)) :type "sxp")
+      (with-open-file (ans-fo (make-pathname :name (format nil "~a" (pathname-name manifest-filename)) :type "cl")
                               :direction :output :if-exists :supersede :if-does-not-exist :create)
         (write ans :stream ans-fo))
       ans)))

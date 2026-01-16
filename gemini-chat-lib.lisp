@@ -42,6 +42,23 @@
               Please set this before running this program."))
       key)))
 
+(defvar *last-token-refresh* 0)
+
+(defvar *cached-token* nil)
+
+(defun get-fresh-bearer-token ()
+  "Fetches a fresh OAuth2 token using gcloud. Caches it for 50 minutes."
+  (let ((now (get-universal-time)))
+    (if (and *cached-token* (< (- now *last-token-refresh*) 3000))
+        *cached-token*
+        (let ((new-token (string-trim '(#\Space #\Newline #\Return)
+                                     (uiop:run-program "gcloud auth print-access-token" 
+                                                       :output :string))))
+          (setf *last-token-refresh* now)
+          (setf *cached-token* new-token)
+          (xlg :auth "Token refreshed at ~A" now)
+          new-token))))
+
 (defun s-s (str delim &key (rem-empty nil))
   "Encapsulates calls to split-sequence. Splits a string by a single character delimiter.
    :rem-empty T will remove empty strings from the result list."
