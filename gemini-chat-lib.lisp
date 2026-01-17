@@ -44,7 +44,7 @@
 
 (defvar *last-token-refresh* 0)
 
-(defvar *cached-token* nil)
+(defvar *cached-token* nil) ;; (setf *cached-token* (gemini-chat-lib::get-fresh-bearer-token))
 
 (defun get-fresh-bearer-token ()
   "Fetches a fresh OAuth2 token using gcloud. Caches it for 50 minutes."
@@ -164,7 +164,9 @@ Returns the text string or NIL if not found."
                                    (setf text (string-trim '(#\Space #\Tab #\Newline) text))
                                    ;;(format t "~%~a~%" text) ;; HMMM this is needed if we are interactive. TODO
                                    (if *run-out-s*
-                                       (format *run-out-s* "~%~a~%" text))
+									   (progn
+										 (format *run-out-s* "~%~a~%" text)
+										 (finish-output *run-out-s*)))
                                    text)
                                  ;; Failure: Missing 'text' key
                                  (progn
@@ -225,8 +227,7 @@ Returns the text string or NIL if not found."
                      ;; In SBCL, :utf-16le is the explicit format for #(255 254) files
                      (setf file-content (uiop:read-file-string native-file-path :external-format :utf-16le)))
                  (error (c)
-				   (break "error on second handler ~s" c)
-                   (xlgt :error-log "Final read error on ~A: ~A" native-file-path c)
+				   (xlgt :error-log "Final read error on ~A: ~A" native-file-path c)
                    (setf all-files-read-ok nil)))))
 
            (when file-content
@@ -304,8 +305,9 @@ Returns the text string or NIL if not found."
     (when (s/z file-path)
       (format t "~&Please specify a file to save to, e.g., :save my-session.log~%")
       (return-from save-cmd))
-    (when *run-out-s*
+	(when *run-out-s*
       (format t "~&gchat: save-cmd: Closing previous save file: ~a~%" (file-namestring (pathname *run-out-s*)))
+      (finish-output *run-out-s*) ;; Flush before closing
       (close *run-out-s*)
       (setf *run-out-s* nil))
     (handler-case
@@ -314,9 +316,10 @@ Returns the text string or NIL if not found."
                                                      (uiop:merge-pathnames* file-path (uiop:getcwd))))))
           (xlg :thinking-log "~&Opening save file: ~a" actual-path)
           (setf *run-out-s* (open actual-path :direction :output :if-does-not-exist :create :if-exists if-exists))
-          (xlgt :thinking-log "~&gchat: save-cmd: Now saving responses to: " actual-path))
+          (xlgt :thinking-log "~&gchat: save-cmd: Now saving responses to: ~a" actual-path)
+          (finish-output *run-out-s*)) 
       (error (c)
-        (xlgt :error-log "~s~&gchat: save-cmd: Failed to open file for saving: ~a" c)
+        (xlgt :error-log "~s~&gchat: save-cmd: Failed to open file for saving" c)
         (setf *run-out-s* nil)))))
 
 (defun input-cmd (user-input)
@@ -393,6 +396,7 @@ Returns the text string or NIL if not found."
 
 					 (t 
 					  (values nil nil))))
+			  
 			  (success-p ;; gem-conv signature: (initial-prompt save single-shot exit-on-error &key model blob-ids)
 			   (let ((response (gem-conv assembled-prompt save t exit-on-error 
 										 :model gemini-model 
