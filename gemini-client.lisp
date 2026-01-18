@@ -11,7 +11,9 @@
 ;; --- Constants and Variables ---
 
 (defparameter *gemini-endpoint* "https://generativelanguage.googleapis.com/v1beta")
+
 (defparameter *user-agent* "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
+
 (defparameter *cookie-jar* (make-instance 'drakma:cookie-jar)) 
 
 ;; New: Stores a static API key (for simpler, but less secure, authentication)
@@ -28,7 +30,6 @@
   "Flag to ensure the library has been initialized with account details.")
 
 (defvar *use-vertex-auth* nil "Dynamic flag to toggle between API Key and Bearer Token.") ;; TODO a parameter
-
 
 (defun gemini-chat-lib-init (&key static-key service-account (tag "gemini-run"))
   "Initializes the library with cloud-specific credentials and starts the logging system."
