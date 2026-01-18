@@ -23,4 +23,5 @@
 		   #:monitor-security-job
 		   #:delete-gemini-file
 		   #:load-job-metadata
-		   #:save-job-metadata))
+		   #:save-job-metadata
+		   #:*gemini-service-account*))
