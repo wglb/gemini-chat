@@ -23,7 +23,7 @@
 ;; --- Define Flags using com.google.flag ---
 
 (defun get-key (keyname)
-  "Retrieves the Gemini API key from ~/.key/keys.lsp. If not found,
+  "Retrieves the Gemini API key from ~/.gemini/keys.lsp. If not found,
    we use the GEMINI_API_KEY environment variable.
    Signals an error if the environment variable is not set."
   (let* ((fn "~/.gemini/keys.lsp")
