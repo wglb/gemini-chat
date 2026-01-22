@@ -6,13 +6,14 @@
         #:uiop/driver
         #:split-sequence
 		#:file-packer-lib
-        #:xlg-lib)
+        #:xlog)
   (:import-from #:drakma #:http-request #:drakma-error)
   (:import-from #:jsown #:to-json #:parse)
   (:import-from #:uiop #:getenv #:slurp-stream-string #:read-file-forms)
   (:export #:run-chat-with-kw
 		   #:gemini-chat-lib-init
 		   #:get-key
+		   #:gem-conv
 		   #:do-api-request
 		   #:upload-file-to-gemini
 		   #:create-gemini-batch-job

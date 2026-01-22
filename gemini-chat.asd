@@ -5,7 +5,8 @@
   :version "1.4.20"
   :serial t
   :depends-on (#:gemini-chat-lib
-               #:xlg-lib
+               #:xlog
+			   #:flag-help
                #:com.google.flag)
   :defsystem-depends-on ("deploy")
   :components ((:file "gemini-chat-pkg")

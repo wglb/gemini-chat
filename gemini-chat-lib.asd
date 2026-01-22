@@ -11,7 +11,7 @@
                #:uiop
 			   #:file-packer-lib
                #:cl-base64
-               #:xlg-lib)
+               #:xlog)
   :components ((:file "gemini-chat-lib-pkg")
                (:file "gemini-client")
 			   (:file "gemini-chat-lib")))
