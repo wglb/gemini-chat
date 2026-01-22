@@ -57,7 +57,7 @@
              "--scopes=https://www.googleapis.com/auth/cloud-platform")
        :output '(:string :stripped t)
        :error-output :string)
-    (error (c) (xlgt :thinking-log "Gcloud token fetch failed: ~a" c) nil)))
+    (error (c) (xlogft  "Gcloud token fetch failed: ~a" c) nil)))
 
 (defun get-cached-auth-token ()
   "Returns the cached token if valid, otherwise fetches a new one."
@@ -66,14 +66,14 @@
 
     (cond ((or (not *active-gemini-token*)
 			   (< *token-expiry-time* (+ now 60)))
-		   (xlgt :thinking-log "Token expired or missing. Fetching fresh token...")
+		   (xlognt "Token expired or missing. Fetching fresh token...")
 		   (setf *active-gemini-token* (get-fresh-gemini-token))
 		   ;; Set expiry for 55 minutes from now
 		   (setf *token-expiry-time* (+ now (* 55 60)))
 		   *active-gemini-token*)
 
 		  ;; Branch 2: Token is valid
-		  (t (xlgt :thinking-log "Token valid.")
+		  (t (xlognt "Token valid.")
 			 *active-gemini-token*))))
 
 (defun get-auth-info ()
@@ -114,7 +114,7 @@
          (setf headers (acons "Authorization" (concatenate 'string "Bearer " token) headers))))
       
       (t
-       (xlg :thinking-log "No authentication information available for API request.")))
+       (xlognt "No authentication information available for API request.")))
 
     ;; START OF EXPONENTIAL BACKOFF LOOP
     (loop
@@ -134,7 +134,7 @@
               (our-json nil)
               (content-type (cdr (assoc :content-type headers))))
           
-          (xlg :thinking-log (format nil "Status: ~a (Attempt ~a)" status-code (1+ retries)) :timestamp t)
+          (xlogf  "Status: ~a (Attempt ~a)" status-code (1+ retries) )
 
           (cond
             ;; 429: Too Many Requests - Trigger Backoff/Retry
@@ -142,7 +142,7 @@
              (when (>= retries max-retries)
                ;; FIX: Max retries reached. Return the response to allow the detailed
                ;; JSON error message to be parsed by the calling function.
-               (xlg :thinking-log "API Quota exceeded after ~a retries. Returning raw error response for parsing." max-retries :timestamp t)
+               (xlogf "API Quota exceeded after ~a retries. Returning raw error response for parsing." max-retries)
                
                ;; Attempt to parse JSON before returning, just like success/other error cases
                (setf our-json (if (and content-type (search "application/json" content-type :test #'char-equal))
@@ -153,8 +153,7 @@
 
              (incf retries)
              (let ((wait-time (+ (expt 2 retries) (random 1.0))))
-               (xlg :thinking-log (format nil "Quota Exceeded (429). Retrying in ~a seconds (~a/~a)." 
-                                          (round wait-time) retries max-retries) :timestamp t)
+               (xlogf "Quota Exceeded (429). Retrying in ~a seconds (~a/~a)." (round wait-time) retries max-retries )
                (sleep wait-time)))
 
             ;; 200-399: Success or Redirects - Process result and exit loop
@@ -169,7 +168,7 @@
             ;; 400+: General Error - Return the error response for parsing
             (t
              ;; For all other non-2xx errors, return the response for detailed parsing
-             (xlg :thinking-log (format nil "API Request failed with status code ~a. Returning raw error response for parsing." status-code) :timestamp t)
+             (xlogf "API Request failed with status code ~a. Returning raw error response for parsing." status-code)
              ;; Parse JSON if content type is application/json
              (if (and content-type (search "application/json" content-type :test #'char-equal))
                  (setf our-json (jsown:parse body)))
@@ -383,7 +382,7 @@
 
 (defun monitor-security-job (job-response)
   "Prints progress for a Vertex batch job object, handling string-to-number conversion for stats."
-  (w/logs  ((:monitor "job-status.log" :hms) (:error "job-status.err" :hms) (:thinking-log "job-status-thinking.log" :hms))
+  (w/log  ("monitor-security-job" :dates :hms :show-log-file-name t :append-or-replace :append)
     (setf *use-vertex-auth* t)
     (let* ((job-name (jsown:val job-response "name"))
            (endpoint (format nil "https://us-central1-aiplatform.googleapis.com/v1/~a" job-name))
@@ -391,9 +390,9 @@
            (state (jsown:val status-json "state"))
            (stats (jsown:val-safe status-json "completionStats")))
       
-      (xlgt :monitor "~&--- Job Status Update ---")
-      (xlg :monitor "response~a" status-json)
-      (xlgt :monitor "~&State: ~A" state)
+      (xlogf "~&--- Job Status Update ---")
+      (xlogntf  "response~a" status-json)
+      (xlogntf "~&State: ~A" state)
       (if stats
           (flet ((ensure-number (val)
                    (cond ((numberp val) val)
@@ -404,9 +403,9 @@
                    (inc  (ensure-number (jsown:val-safe stats "incompleteCount")))
                    (total (+ succ fail inc))
                    (pct   (if (> total 0) (* (/ (+ succ fail) total) 100.0) 0)))
-              (xlgt :monitor "~&Progress: ~A succeeded, ~A failed. (~A still in progress) [~,2F%]" 
+              (xlogf "~&Progress: ~A succeeded, ~A failed. (~A still in progress) [~,2F%]" 
                     succ fail inc pct)))
-          (xlgt :monitor "~&Progress: Waiting for job to start processing lines..."))
+          (xlog "~&Progress: Waiting for job to start processing lines..."))
       state)))
 
 (defun run-security-scan-batch (file-to-scan questions-list model-name)
@@ -415,14 +414,14 @@
         (file-id nil)
         (results nil))
     
-    (xlg :thinking-log "Starting security scan. Uploading file once..." :timestamp t)
+    (xlog "Starting security scan. Uploading file once..." )
     ;; Step 1: Upload the large file (Requires implementation in gemini-client.lisp)
     (setf file-id (upload-file-to-gemini file-to-scan mime-type)) 
-    (xlg :thinking-log "File uploaded successfully. ID: ~a" file-id)
+    (xlogntf "File uploaded successfully. ID: ~a" file-id)
     ;; Step 2: Loop through all 28 questions, referencing the uploaded file ID
     (loop for question in questions-list
           for i from 1
-          do (xlg :thinking-log "Processing question ~a of ~a..." i (length questions-list) :timstamp 1)
+          do (xlogf "Processing question ~a of ~a..." i (length questions-list))
              (let ((response-candidates 
                      (call-gemini-model model-name 
                                         question 
@@ -440,83 +439,83 @@
 (defun check-batch-job-status (job-id &key (tag "batch-status"))
   "Polls the Gemini API for the status of a specific batch job.
    JOB-ID is the 'name' field returned by create-gemini-batch-job."
-  (with-open-log-files ((:thinking-log (format nil "~a-thinking.log"   tag) :hour)  
-                        (:error-log    (format nil "~a-error.log"      tag) :hour))
-    (xlg :thinking-log "Polling status for Job: ~A" job-id :timestamp t)
+  (w/log  ((format nil "thinking-log-~s" tag) :dates :hour :show-log-file-name t :append-or-replace :append)
+	(xlogf  "Polling status for Job: ~A" job-id)
     (handler-case
         (let* ((result (do-api-request job-id "" :get))
                (state (jsown:val-safe result "state")))
-          (xlg :thinking-log "Current Job State: ~A" state)
+          (xlogf  "Current Job State: ~A" state)
           
           ;; Check for job-level errors (e.g., if the whole job failed)
           (let ((error-node (jsown:val-safe result "error")))
             (when error-node
-              (xlgt :error-log "Job reported internal error: ~S" error-node)))
+              (xlogf  "Job reported internal error: ~S" error-node)))
           
           ;; Log progress if available (some versions of the API provide counts)
           (let ((progress (jsown:val-safe result "progressStats")))
             (when progress
-              (xlg :thinking-log "Progress: ~S" progress)))
+              (xlogf "Progress: ~S" progress)))
 
           state)
       (error (c)
-        (xlgt :error-log "API communication error during status check: ~A" c :timestamp t)
+        (xlogf  "API communication error during status check: ~A" c)
         "UNKNOWN"))))
 
 (defun create-vertex-batch-job (project-id gcs-bucket-name manifest-filename 
                                 &key (model "gemini-2.5-pro") (tag "batch-create"))
   "Initiates a batch prediction job using the Vertex AI endpoint."
-  (setf *use-vertex-auth* t) ;; Toggle to Bearer Token
-  (let* ((region "us-central1")
-         (bucket-path (if (uiop:string-prefix-p "gs://" gcs-bucket-name)
-                          gcs-bucket-name
-                          (format nil "gs://~a" gcs-bucket-name)))
-         (manifest-uri (format nil "~a/~a" bucket-path manifest-filename))
-         (output-uri (format nil "~a/reports/~a/" bucket-path tag))
-         (endpoint (format nil "https://~a-aiplatform.googleapis.com/v1/projects/~a/locations/~a/batchPredictionJobs"
-                           region project-id region))
-         (payload (jsown:new-js
-                    ("displayName" (format nil "Security-Analysis-~a" tag))
-                    ("model" (format nil "projects/~a/locations/~a/publishers/google/models/~a" 
-                                     project-id region model))
-					("inputConfig" (jsown:new-js 
-									 ("instancesFormat" "jsonl")
-									 ("gcsSource" (jsown:new-js 
-													("uris" (list manifest-uri))))))
-                    ("outputConfig" (jsown:new-js
-                                      ("predictionsFormat" "jsonl")
-                                      ("gcsDestination" (jsown:new-js 
-                                                          ("outputUriPrefix" output-uri))))))))
-    (xlgt :batch "cvbj: project ~s bucket path ~s manifest uri ~s manifest file name ~s"
-          project-id bucket-path    manifest-uri    manifest-filename)
-	(xlg :batch "payload~a" (jsown:to-json payload))
-    (let ((ans (do-api-request endpoint (jsown:to-json payload) :post)))
-      (with-open-file (ans-fo (make-pathname :name (format nil "~a" (pathname-name manifest-filename)) :type "cl")
-                              :direction :output :if-exists :supersede :if-does-not-exist :create)
-        (write ans :stream ans-fo))
-      ans)))
+  (w/log (tag :dates :hms :show-log-file-name t :append-or-replace :append)
+	(setf *use-vertex-auth* t) ;; Toggle to Bearer Token
+	(let* ((region "us-central1")
+           (bucket-path (if (uiop:string-prefix-p "gs://" gcs-bucket-name)
+							gcs-bucket-name
+							(format nil "gs://~a" gcs-bucket-name)))
+           (manifest-uri (format nil "~a/~a" bucket-path manifest-filename))
+           (output-uri (format nil "~a/reports/~a/" bucket-path tag))
+           (endpoint (format nil "https://~a-aiplatform.googleapis.com/v1/projects/~a/locations/~a/batchPredictionJobs"
+							 region project-id region))
+           (payload (jsown:new-js
+                      ("displayName" (format nil "Security-Analysis-~a" tag))
+                      ("model" (format nil "projects/~a/locations/~a/publishers/google/models/~a" 
+                                       project-id region model))
+					  ("inputConfig" (jsown:new-js 
+									   ("instancesFormat" "jsonl")
+									   ("gcsSource" (jsown:new-js 
+													  ("uris" (list manifest-uri))))))
+                      ("outputConfig" (jsown:new-js
+										("predictionsFormat" "jsonl")
+										("gcsDestination" (jsown:new-js 
+															("outputUriPrefix" output-uri))))))))
+      (xlogntf "cvbj: project ~s bucket path ~s manifest uri ~s manifest file name ~s"
+			project-id bucket-path    manifest-uri    manifest-filename)
+	  (xlogntf "payload~a" (jsown:to-json payload))
+      (let ((ans (do-api-request endpoint (jsown:to-json payload) :post)))
+		(with-open-file (ans-fo (make-pathname :name (format nil "~a" (pathname-name manifest-filename)) :type "cl")
+								:direction :output :if-exists :supersede :if-does-not-exist :create)
+          (write ans :stream ans-fo))
+		ans))))
 
 (defun upload-to-gcs (local-path gcs-bucket-name &key (tag "gcs-upload"))
   "Uploads a local file to GCS using the gsutil command line tool."
-  (with-open-log-files ((:thinking-log (format nil "~a-thinking.log" tag) :hour)
-                        (:error-log    (format nil "~a-error.log"    tag) :hour))
-    (let ((destination (format nil "gs://~a/~a" 
-                           (cl-ppcre:regex-replace "^gs://" gcs-bucket-name "") 
-                           (file-namestring local-path))))
-      (xlg :thinking-log "Uploading ~A to ~A" local-path destination :timestamp t)
+  (w/log ((format nil "~a-thinking.log" tag) :dates :hour :show-log-file-name :both :append-or-replace :append)
+	(let ((destination (format nil "gs://~a/~a" 
+							   (cl-ppcre:regex-replace "^gs://" gcs-bucket-name "") 
+							   (file-namestring local-path))))
+      (xlogf  "Uploading ~A to ~A" local-path destination)
       (multiple-value-bind (output error-output exit-code)
           (uiop:run-program (list "gsutil" "cp" (namestring local-path) destination)
-                            :ignore-error-status t
-                            :output :string
-                            :error-output :string)
-        (declare (ignorable output))
+							:ignore-error-status t
+							:output :string
+							:error-output :string)
+		(declare (ignorable output))
 		(if (zerop exit-code)
-            (progn
-			  (xlgt :thinking-log "Upload successful.")
+			(progn
+			  (xlognt  "Upload successful.")
 			  t)
-            (progn
-			  (xlgt :error-log "Upload failed with exit code ~D~%Error: ~A" exit-code error-output)
+			(progn
+			  (xlogf "Upload failed with exit code ~D~%Error: ~A" exit-code error-output)
 			  nil))))))
+
 ;; list every object in the bucket:
 ;; gsutil ls -r gs://wglb-security-analysis-2025/**
 
