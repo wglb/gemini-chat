@@ -41,7 +41,7 @@
 
 (defun get-fresh-bearer-token ()
   "Fetches a fresh OAuth2 token using gcloud. Caches it for 50 minutes."
-  (w/log ((format nil "auth.log" ) :dates :hour :show-log-file-name nil :append-or-replace :append))
+  (w/log ((format nil "auth" ) :dates :hour :show-log-file-name nil :append-or-replace :append))
   (let ((now (get-universal-time)))
     (if (and *cached-token* (< (- now *last-token-refresh*) 3000))
         *cached-token*
@@ -88,7 +88,7 @@
 (defun api-req (msgs &key (model "gemini-2.5-pro"))
   "Constructs and sends an HTTP POST request to the Gemini API, 
    delegating to DO-API-REQUEST for backoff and auth. Returns the parsed JSON object."
-  (w/log ((format nil "~a-thinking.log" "api") :dates :hour :show-log-file-name nil :append-or-replace :append))
+  (w/log ((format nil "~a-thinking" "api") :dates :hour :show-log-file-name nil :append-or-replace :append))
   (let* (;; The API key is handled by the client library *static-api-key*
          (uri-parts (format nil "models/~a:generateContent" model))
          (json-payload-lisp-object (make-api-request-payload msgs))
@@ -284,7 +284,7 @@ Returns the text string or NIL if not found."
   "Handles a turn. Now supports separate blob-ids for correct File API usage."
   (declare (ignorable exit-on-error))
   ;; Construct parts: Start with the text, then add each blob as a file part
-  (w/log ((format nil "~a-thinking.log" "conv") :dates :hour :show-log-file-name nil :append-or-replace :append)
+  (w/log ((format nil "~a-thinking" "conv") :dates :hour :show-log-file-name nil :append-or-replace :append)
 	(let* ((parts (append (list (make-text-part initial-prompt))
                           (mapcar #'make-file-part blob-ids)))
            (conversation-history (list (make-message-turn "user" parts))))
@@ -362,7 +362,7 @@ Returns the text string or NIL if not found."
         (handler-case
             (format result "~&File: ~a~%```~%~a~%```~%~%" (file-namestring file) (uiop:read-file-string file))
           (error (e)
-			(w/log ((format nil "~a-thinking.log" "ctx") :dates :hour :show-log-file-name t :append-or-replace :append)
+			(w/log ((format nil "~a-thinking" "ctx") :dates :hour :show-log-file-name t :append-or-replace :append)
 			  (xlogf  "~&Failed to read context file: ~a" e)
               (format t "~&Failed to read context file: ~a~%" e)))))
       (get-output-stream-string result))))
@@ -392,7 +392,7 @@ Returns the text string or NIL if not found."
 						   (custom-id nil)
                            (remaining-args nil))
   "Orchestrates prompt assembly. Batch-mode redirects to batch-stream."
-  (w/log ((format nil "~a-thinking.log" tag) :dates :hour :show-log-file-name t :append-or-replace :append)
+  (w/log ((format nil "~a-thinking" tag) :dates :hour :show-log-file-name t :append-or-replace :append)
 	(let ((prompt-text (car remaining-args)))
       ;; build-full-prompt signature: (context input-files prompt-text exit-on-error)
       (multiple-value-bind (assembled-prompt success-p blob-ids)
