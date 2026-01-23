@@ -404,7 +404,7 @@
                    (total (+ succ fail inc))
                    (pct   (if (> total 0) (* (/ (+ succ fail) total) 100.0) 0)))
               (xlogf "~&Progress: ~A succeeded, ~A failed. (~A still in progress) [~,2F%]" 
-                    succ fail inc pct)))
+                     succ fail inc pct)))
           (xlog "~&Progress: Waiting for job to start processing lines..."))
       state)))
 
@@ -497,7 +497,7 @@
 
 (defun upload-to-gcs (local-path gcs-bucket-name &key (tag "gcs-upload"))
   "Uploads a local file to GCS using the gsutil command line tool."
-  (w/log ((format nil "~a-thinking.log" tag) :dates :hour :show-log-file-name :both :append-or-replace :append)
+  (w/log ((format nil "~a-thinking" tag) :dates :hour :show-log-file-name :both :append-or-replace :append)
 	(let ((destination (format nil "gs://~a/~a" 
 							   (cl-ppcre:regex-replace "^gs://" gcs-bucket-name "") 
 							   (file-namestring local-path))))

@@ -142,7 +142,7 @@
 
 (defun show-opts (&key (bad-args nil))
   "Prints the command-line options to the thinking log file, using the flag special variables."
-  (w/log ("option.log" :dates :hour :show-log-file-name nil :append-or-replace :replace)
+  (w/log ("option" :dates :hour :show-log-file-name nil :append-or-replace :replace)
 	(xlogntf "~&Entering run-chat with flags:" )
 	(xlogntf "Keyname: ~a" *keyname*)
 	(xlogntf "Context files: ~a" *context*)
@@ -156,11 +156,7 @@
 	(xlogntf (print-all-flag-values))
 	(when bad-args
 	  (xlogntf "Unprocessed command-line options: ~s" bad-args))))
-;; Copyright 2026 Bill
-;; License: :mit
 
-
-;; In gemini-chat.lisp, ensure run-chat delegates to this conversational loop
 (defun run-chat (cmd-line)
   (multiple-value-bind (remaining-args badargs)
 	  (chk-args cmd-line  (get-version))
