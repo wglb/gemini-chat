@@ -14,7 +14,8 @@
 ;; In gemini-cost-calculator.lisp
 
 (defparameter *async-pricing*
-  '((:GEMINI-2.5-PRO .         ((:INPUT-COST-PER-M 0.625) (:OUTPUT-COST-PER-M 5.0)))
+  '((:GEMINI-3.0-PRO-PREVIEW . ((:INPUT-COST-PER-M 0.625) (:OUTPUT-COST-PER-M 5.0)))
+	(:GEMINI-2.5-PRO .         ((:INPUT-COST-PER-M 0.625) (:OUTPUT-COST-PER-M 5.0)))
     (:GEMINI-2.5-FLASH .       ((:INPUT-COST-PER-M 0.015) (:OUTPUT-COST-PER-M 0.15)))
     (:GEMINI-2.5-FLASH-LITE .  ((:INPUT-COST-PER-M 0.05)  (:OUTPUT-COST-PER-M 0.2)))
     (:N/A .                    ((:INPUT-COST-PER-M 0.15)  (:OUTPUT-COST-PER-M 1.25))))
@@ -34,8 +35,9 @@
         (second result)
         (error "Cost type ~A not found in ~s." cost-type pricing-data))))
 
-(defun normalize-model-name (model-string)
-  (let ((canonical (cond ((string-equal model-string "gemini-3-pro-preview") "gemini-3.0-pro-preview")
+(defun normalize-model-name (model-string) ;;
+  (let ((canonical (cond ((string-equal model-string "gemini-3-pro-preview")
+						  "gemini-3.0-pro-preview")
                          (model-string model-string)
                          (t "gemini-3.0-pro-preview"))))
     (intern (string-upcase canonical) :keyword))) 
