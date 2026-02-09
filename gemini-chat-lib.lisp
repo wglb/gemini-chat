@@ -108,7 +108,7 @@
 (defmacro log-answer (tag control-string &rest args)
   `(w/log ((format nil "~a-answer" (or ,tag "process")) 
                         :dates :hour 
-                        :show-log-file-name :both 
+                        :show-log-file-name nil
                         :append-or-replace :append)
      (xlogf ,control-string ,@args)))
 
@@ -362,7 +362,7 @@ Returns the text string or NIL if not found."
         (handler-case
             (format result "~&File: ~a~%```~%~a~%```~%~%" (file-namestring file) (uiop:read-file-string file))
           (error (e)
-			(w/log ((format nil "~a-thinking" "ctx") :dates :hour :show-log-file-name t :append-or-replace :append)
+			(w/log ((format nil "~a-thinking" "ctx") :dates :hour :show-log-file-name nil :append-or-replace :append)
 			  (xlogf  "~&Failed to read context file: ~a" e)
               (format t "~&Failed to read context file: ~a~%" e)))))
       (get-output-stream-string result))))
@@ -392,7 +392,7 @@ Returns the text string or NIL if not found."
 						   (custom-id nil)
                            (remaining-args nil))
   "Orchestrates prompt assembly. Batch-mode redirects to batch-stream."
-  (w/log ((format nil "~a-thinking" tag) :dates :hour :show-log-file-name t :append-or-replace :append)
+  (w/log ((format nil "~a-thinking" tag) :dates :hour :show-log-file-name nil :append-or-replace :append)
 	(let ((prompt-text (car remaining-args)))
       ;; build-full-prompt signature: (context input-files prompt-text exit-on-error)
       (multiple-value-bind (assembled-prompt success-p blob-ids)
