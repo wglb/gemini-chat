@@ -25,4 +25,9 @@
 		   #:delete-gemini-file
 		   #:load-job-metadata
 		   #:save-job-metadata
+		   #:set-static-api-key
+		   #:monitor-batch-job
+		   #:inspect-job-stalling
+		   #:check-quota-status
+		   #:check-batch-job-status
 		   #:*gemini-service-account*))
