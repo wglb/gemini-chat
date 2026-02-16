@@ -2,4 +2,5 @@
   (:use :cl)
   (:export :calculate-cost-from-log
            :print-cost-report
+		   #:get-pricing-data
            :*gemini-pricing*))
