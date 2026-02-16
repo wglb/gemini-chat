@@ -43,16 +43,23 @@
     (intern (string-upcase canonical) :keyword))) 
 
 (defun calculate-cost-from-log (log-s-expression &key (async nil))
-  "Calculates cost for a single log entry, choosing pricing based on the :async flag."
+  "Calculates cost for a single log entry, including reasoning/thought tokens."
   (let* ((pricing (if async *async-pricing* *gemini-pricing*))
          (model-alist (assoc :modelversion log-s-expression))
          (model-string (if model-alist (cdr model-alist) "gemini-2.5-pro"))
+         ;; Extract standard counts
          (input-tokens (cdr (assoc :prompt-token-count log-s-expression)))
          (output-raw   (cdr (assoc :candidates-token-count log-s-expression)))
-         (output-tokens (if (numberp output-raw) output-raw 0))
+         ;; Extract thoughts (default to 0 for older logs/standard models)
+         (thought-tokens (or (cdr (assoc :thought-token-count log-s-expression)) 0))
+         ;; Billing logic: Total Output = Standard Output + Thought Tokens
+         (output-tokens (+ (if (numberp output-raw) output-raw 0)
+                           thought-tokens))
          (model-keyword (normalize-model-name model-string)))
-    (unless (and input-tokens output-tokens)
+    
+    (unless (and input-tokens (numberp output-raw))
       (error "Missing token counts in log entry: ~S" log-s-expression))
+    
     (let* ((pricing-data (get-pricing-data model-keyword pricing))
            (input-cost (* (/ input-tokens 1000000.0) 
                           (get-cost-per-m pricing-data :input-cost-per-m)))
