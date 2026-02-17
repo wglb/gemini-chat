@@ -143,4 +143,4 @@
         (process-command-line-targets '("."))))) 
 
 (defun save-core ()
-  (sb-ext:save-lisp-and-die "gemini-cost-calculator" :toplevel #'top :executable t))
+  (sb-ext:save-lisp-and-die "gemini-cost-calculator" :toplevel #'top :executable t :compression 9))

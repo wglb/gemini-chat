@@ -15,7 +15,7 @@ $(CHAT_EXE): gemini-chat.lisp gemini-chat.asd gemini-chat-pkg.lisp gemini-chat-l
 	sbcl --dynamic-space-size 2000 --disable-debugger \
 		--eval "(asdf:operate 'asdf:load-op 'gemini-chat)" \
 		--eval '(in-package #:gemini-chat)' \
-		--eval '(save-core-uncompressed)'
+		--eval '(save-core)'
 	touch $(CHAT_EXE)
 
 install: $(BIN_DIR)/$(CALC_EXE) $(BIN_DIR)/$(CHAT_EXE)
