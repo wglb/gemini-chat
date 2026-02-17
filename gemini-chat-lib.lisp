@@ -280,39 +280,49 @@ Returns the text string or NIL if not found."
     `(:obj ("file_data" . (:obj ("mime_type" . "text/plain")
                                 ("file_uri" . ,full-uri))))))
 
-(defun gem-conv (initial-prompt save single-shot exit-on-error &key (model "gemini-2.5-pro") (blob-ids nil) (echo-to-console nil))
-  "Handles a turn. Now supports separate blob-ids for correct File API usage."
+(defun gem-conv (initial-prompt save single-shot exit-on-error &key (model "gemini-2.0-flash") (blob-ids nil) (echo-to-console nil))
+  "Handles a turn using DO instead of LOOP. Returns the last model answer string."
   (declare (ignorable exit-on-error))
-  ;; Construct parts: Start with the text, then add each blob as a file part
   (w/log ((format nil "~a-thinking" "conv") :dates :hour :show-log-file-name nil :append-or-replace :append)
-	(let* ((parts (append (list (make-text-part initial-prompt))
+    (let* ((parts (append (list (make-text-part initial-prompt))
                           (mapcar #'make-file-part blob-ids)))
            (conversation-history (list (make-message-turn "user" parts))))
-      (loop
-		(let* ((parsed-json (api-req conversation-history :model model)))
+      ;; do (variable-definitions) (termination-condition return-value) body
+      (do ((last-answer nil)
+           (user-input nil)
+           (done-p nil))
+          (done-p last-answer)
+        (let* ((parsed-json (api-req conversation-history :model model)))
           (when save
-			(save-cmd (format nil ":save ~a" save)))
+            (save-cmd (format nil ":save ~a" save)))
           (let ((answer (extract-txt parsed-json echo-to-console)))
-			(when (jsown:keyp parsed-json "candidates")
-              (push (make-message-turn "model" (list (make-text-part answer))) conversation-history))
-			(unless (or (string= answer "quit") (string= answer ":quit") single-shot)
-              (xlogntft  "~&Single shot is ~s>> " single-shot)
-              (finish-output)
-              (let ((user-input (read-line)))
-				(when (or (string= user-input "quit") (string= user-input ":quit"))
-                  (return))
-				(let ((command (if (s/nz user-input)
-                                   (string-trim '(#\Space #\Tab)
-												(car (s-s user-input #\Space :rem-empty nil)))
-                                   "")))
-                  (cond
-					((string= command ":input") (input-cmd user-input))
-					((string= command ":save") (save-cmd user-input)) 
-					(t
-					 (push (make-message-turn "user" (list (make-text-part user-input))) 
-                           conversation-history)))))))
-          (when single-shot (return)))))))
-
+            (setf last-answer answer)
+            (when (jsown:keyp parsed-json "candidates")
+              (push (make-message-turn "model" (list (make-text-part answer))) 
+                    conversation-history))
+            
+            ;; Check termination for single-shot or quit response
+            (if (or single-shot (string= answer "quit") (string= answer ":quit"))
+                (setf done-p t)
+                ;; Interactive branch
+                (progn
+                  (xlogntft "~&Single shot is ~s>> " single-shot)
+                  (finish-output)
+                  (setf user-input (read-line))
+                  (let ((command (if (s/nz user-input)
+                                     (string-trim '(#\Space #\Tab)
+                                                  (car (s-s user-input #\Space :rem-empty nil)))
+                                     "")))
+                    (cond
+                      ((or (string= user-input "quit") (string= user-input ":quit"))
+                       (setf done-p t))
+                      ((string= command ":input") 
+                       (input-cmd user-input))
+                      ((string= command ":save") 
+                       (save-cmd user-input))
+                      (t
+                       (push (make-message-turn "user" (list (make-text-part user-input))) 
+                             conversation-history))))))))))))
 
 (defun save-cmd (out-to-user &key (if-exists :supersede))
   "Handles the :save command, opening a new file for responses."
@@ -380,6 +390,7 @@ Returns the text string or NIL if not found."
     (format stream "~A~%" json-line)
     (finish-output stream)))
 
+
 (defun run-chat-with-kw (&key 
                            (gemini-model "gemini-2.5-pro")
                            (context "context.txt")
@@ -422,3 +433,193 @@ Returns the text string or NIL if not found."
 
 			  (t 
 			   (values nil nil)))))))
+
+(defun gemini-fix-file (pathname instruction)
+  "Loads a file and asks Gemini to fix it. Corrected for gemini-chat-lib signature."
+  (let* ((original-code (uiop:read-file-string pathname))
+         (full-prompt (format nil "SYSTEM: Expert Lisp dev. Return ONLY code. NO PROSE.~%USER: ~a~%~%CODE:~%~a" 
+                              instruction original-code)))
+    ;; multiple-value-bind response from run-chat-with-kw
+    ;; Note: It returns (values response-text success-p)
+    (multiple-value-bind (response success-p)
+        (run-chat-with-kw :remaining-args (list full-prompt)
+                          :save (format nil "~a.fixed" (file-namestring pathname)))
+      (if (and success-p response)
+          (progn 
+            (xlogntft "Agentic fix successful for ~a. Result in .fixed file." (file-namestring pathname))
+            response) ;; Use the variable to satisfy the style-warning
+          (xlogntft "Agentic fix failed or returned empty response.")))))
+
+(defun gemini-fix-region-to-file (code-text instruction &key (filename "agent-fix.lisp"))
+  "Automates the transformation of a specific code block."
+  (let ((full-prompt (format nil "SYSTEM: Expert Lisp dev. Return ONLY code. NO PROSE.~%~
+                                  USER: ~a~%~%CODE BLOCK:~%~a" 
+                             instruction code-text)))
+    (multiple-value-bind (response success-p)
+        (run-chat-with-kw :remaining-args (list full-prompt)
+                          :save filename)
+      (if (and success-p response)
+          (progn
+            (xlogntft "Agentic fix successful. Result written to ~a" filename)
+            response)
+          (xlogntft "Agentic fix failed to return valid code.")))))
+
+
+
+
+(defun agentic-fix-involved-section (path start-line end-line instruction &key (debug nil))
+  "Fixes a specific line range in PATH while providing the first 50 lines as context.
+This prevents the agent from hallucinating package names or global variables.
+Returns the corrected section as a string."
+  (let* ((full-text (uiop:read-file-string path))
+         (lines (split-sequence:split-sequence #\Newline full-text))
+         ;; Context: first 50 lines (packages/globals)
+         (context (subseq lines 0 (min 50 (length lines))))
+         ;; Target: the specific lines to fix (1-based indexing)
+         (target (subseq lines (1- start-line) (min end-line (length lines))))
+         (full-prompt (format nil "CONTEXT (Package/Globals):~%~{~A~%~}~%~
+                                  TARGET CODE TO FIX:~%~{~A~%~}~%~
+                                  INSTRUCTION: ~a" 
+                             context target instruction)))
+    (when (member :agent debug)
+      (xlogntft "Agentic fix for ~a (lines ~a-~a)" (file-namestring path) start-line end-line))
+    (multiple-value-bind (response success-p)
+        (run-chat-with-kw :remaining-args (list full-prompt)
+                          :save "complex-fix.lisp")
+      (if (and success-p (stringp response))
+          (cl-ppcre:regex-replace-all "(?s)^```(?:lisp)?\\n?|\\n?```$" response "")
+          "Error: Complex fix failed."))))
+
+;;; --- Core Logic Helpers ---
+
+(defun %agentic-strip-markdown (text)
+  "Internal helper to remove Markdown code fences if the agent includes them."
+  (cl-ppcre:regex-replace-all "(?s)^```(?:lisp)?\\n?|\\n?```$" text ""))
+
+(defun %agentic-call-and-save (prompt save-path &optional (context-msg "Fix"))
+  "Internal bridge to the chat-KW system. Handles success/fail logging."
+  (multiple-value-bind (response success-p)
+      (run-chat-with-kw :remaining-args (list prompt) :save save-path)
+    (if (and success-p (stringp response))
+        (progn
+          (xlogntft "Agentic ~a successful. Result in: ~a" context-msg save-path)
+          (%agentic-strip-markdown response))
+        (progn
+          (xlogntft "Agentic ~a failed for ~a." context-msg save-path)
+          nil))))
+
+;;; --- User Facing Functions ---
+
+(defun agentic-fix-region (code-text instruction &key (debug nil))
+  "Directly transforms CODE-TEXT based on INSTRUCTION. Returns clean string.
+Uses :debug '(:agent) to trigger extended logging."
+  (let ((full-prompt (format nil "Provide ONLY the corrected Common Lisp source code. ~
+                                  No prose, no markdown backticks, no explanations.~%~%~
+                                  INSTRUCTION: ~a~%~%~
+                                  CODE TO FIX:~%~a" 
+                             instruction code-text)))
+    (multiple-value-bind (response success-p)
+        (run-chat-with-kw :remaining-args (list full-prompt)
+                          :save "last-agent-fix.lisp")
+      ;; Use the debug variable to gate the status log
+      (when (member :agent debug)
+        (xlogntft "Agent Status - Success: ~a | Response Length: ~a" 
+                  success-p (if (stringp response) (length response) 0)))
+      
+      (if (and success-p (stringp response))
+          (let ((clean (%agentic-strip-markdown response)))
+            (when (member :agent debug)
+              (xlogntft "Returning ~d characters to Emacs." (length clean)))
+            clean)
+          "Error: Gemini failed to return a valid string response."))))
+
+(defun agentic-project-modify (project-dir instruction-files &key (extra-instruction ""))
+  "Packs the project and appends specific instruction files PLUS iterative feedback."
+  (let* ((base-path (uiop:ensure-directory-pathname project-dir))
+         (project-files (remove-if-not 
+                         (lambda (p) 
+                           (let ((ext (pathname-type p)) (name (pathname-name p)))
+                             (or (member ext '("lisp" "asd" "1") :test #'string-equal)
+                                 (string-equal name "Makefile"))))
+                         (uiop:directory-files base-path)))
+         ;; NEW: Explicitly find the primary system map to emphasize it
+         (asd-content (with-output-to-string (s)
+                        (dolist (p project-files)
+                          (when (string-equal (pathname-type p) "asd")
+                            (format s "~%--- SYSTEM MAP: ~a ---~%~a~%" 
+                                    (pathname-name p) (uiop:read-file-string p))))))
+         (project-context 
+          (with-output-to-string (s) 
+            (file-packer-lib:pack-files-to-stream project-files s)))
+         (instr-context
+          (with-output-to-string (s)
+            (dolist (f-path instruction-files)
+              (format s "~%--- POLICY: ~a ---~%~a~%" f-path (uiop:read-file-string f-path)))
+            (format s "~%--- ITERATION FEEDBACK ---~%~a~%" extra-instruction))))
+    (run-chat-with-kw :remaining-args (list (format nil "SYSTEM STRUCTURE:~%~a~%~%FILES:~%~a~%~%INSTRUCTIONS:~%~a" 
+                                                    asd-content project-context instr-context))
+                      :save "project-update-plan.txt")))
+
+(defun apply-agentic-plan (project-dir)
+  "Parses project-update-plan.txt and writes contents to files in PROJECT-DIR.
+Creates .bak files before overwriting."
+  (let* ((plan-path (merge-pathnames "project-update-plan.txt" (uiop:ensure-directory-pathname project-dir)))
+         (plan-text (uiop:read-file-string plan-path))
+         ;; Regex to find blocks: ===BEGIN_FILE: path=== ... content ...
+         (scanner (cl-ppcre:create-scanner "(?s)===BEGIN_FILE: (.*?)===\\n(.*?)(?=\\n===BEGIN_FILE:|$)" 
+                                           :multi-line-mode t)))
+    (cl-ppcre:do-register-groups (file-path content) (scanner plan-text)
+      (let* ((full-path (merge-pathnames file-path (uiop:ensure-directory-pathname project-dir)))
+             (bak-path (make-pathname :defaults full-path :type "bak")))
+        (when (probe-file full-path)
+          (uiop:copy-file full-path bak-path))
+        (with-open-file (out full-path :direction :output :if-exists :supersede)
+          (write-string (%agentic-strip-markdown content) out))
+        (xlogntft "Applied updates to ~a (Backup created at ~a)" file-path (file-namestring bak-path))))))
+
+(defun agentic-iterative-build (project-dir instruction-files &key (max-tries 3) (debug nil))
+  "Refactor-Compile-Fix loop. Uses the project's Makefile 'all' target for validation."
+  (let ((iteration 0)
+        (success-p nil) ;; Renamed to avoid confusion and properly initialized
+        (extra-context ""))
+    (loop while (and (< iteration max-tries) (not success-p)) do
+      (incf iteration)
+      (xlogntft "Iteration ~d: Attempting refactor and build..." iteration)
+      
+      ;; 1. Generate and Apply Plan
+      (let ((instruction (format nil "Refactor project. ~a" extra-context)))
+        (agentic-project-modify project-dir instruction-files :extra-instruction instruction))
+      (apply-agentic-plan project-dir)
+
+      ;; 2. Run Makefile 'all'
+      (multiple-value-bind (output error-output exit-code)
+          (uiop:run-program "make all" 
+                            :directory project-dir 
+                            :ignore-error-status t 
+                            :output :string 
+                            :error-output :string)
+        (if (zerop exit-code)
+            (setf success-p t)
+            (progn 
+              (when (member :agent debug)
+                (xlogntft "Build FAILED. Capturing errors for turn ~d." iteration))
+              ;; Feed the error output into the next prompt
+              (setf extra-context 
+                    (format nil "PREVIOUS BUILD ERRORS:~%STDOUT:~%~a~%STDERR:~%~a" 
+                            output error-output))))))
+    (if success-p
+        (xlogntft "Build SUCCESS.")
+        (xlogntft "Build FAILED after ~d attempts." max-tries))
+    success-p))
+
+(defun example-project-modification ()
+  (agentic-project-modify 
+   "/home/wgl/lisplib/public/create-lisp-project/"
+   '("~/lisplib/production/context/triple-escape.txt" 
+     "~/lisplib/production/context/flag-refactor.txt"
+     "~/lisplib/production/context/makefile-standard.txt")))
+
+
+;;(gemini-chat-lib-init :static-key (get-key "ciex") :service-account "")
+
+

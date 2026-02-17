@@ -1,0 +1,4 @@
+Model,Input Cost (Per 1M Tokens),Output Cost (Per 1M Tokens)
+Gemini 3.0 Pro,$2.00,$12.00
+Gemini 2.5 Pro,$1.25,$10.00
+Gemini 2.5 Flash,$0.30,$2.50
