@@ -46,19 +46,23 @@
   "Calculates cost for a single log entry, including reasoning/thought tokens."
   (let* ((pricing (if async *async-pricing* *gemini-pricing*))
          (model-alist (assoc :modelversion log-s-expression))
-         (model-string (if model-alist (cdr model-alist) "gemini-2.5-pro"))
-         ;; Extract standard counts
-         (input-tokens (cdr (assoc :prompt-token-count log-s-expression)))
-         (output-raw   (cdr (assoc :candidates-token-count log-s-expression)))
+         (model-string (let ((val (cdr model-alist)))
+                         (if (stringp val) val "gemini-2.5-pro")))
+         ;; Extract counts, defaulting to 0 if missing or non-numeric
+         (raw-in (cdr (assoc :prompt-token-count log-s-expression)))
+         (raw-out (cdr (assoc :candidates-token-count log-s-expression)))
+         (input-tokens (if (numberp raw-in) raw-in 0))
+         (output-raw   (if (numberp raw-out) raw-out 0))
          ;; Extract thoughts (default to 0 for older logs/standard models)
          (thought-tokens (or (cdr (assoc :thought-token-count log-s-expression)) 0))
          ;; Billing logic: Total Output = Standard Output + Thought Tokens
-         (output-tokens (+ (if (numberp output-raw) output-raw 0)
-                           thought-tokens))
+         (output-tokens (+ output-raw thought-tokens))
          (model-keyword (normalize-model-name model-string)))
     
-    (unless (and input-tokens (numberp output-raw))
-      (error "Missing token counts in log entry: ~S" log-s-expression))
+    ;; Warn about malformed entries without crashing
+    (when (or (zerop input-tokens) (zerop output-raw))
+      (format *error-output* "~&Warning: Missing or zero token counts in entry: ~S~%" 
+              (cdr (assoc :custom-id log-s-expression))))
     
     (let* ((pricing-data (get-pricing-data model-keyword pricing))
            (input-cost (* (/ input-tokens 1000000.0) 
@@ -77,7 +81,8 @@
   (let ((forms (uiop:read-file-forms pathname))
         (f-cost 0.0) (f-in 0) (f-out 0)
         (last-m "N/A"))
-    (loop for entry in forms do
+    ;; Switched from loop to dolist per Bill's preference 
+    (dolist (entry forms)
       (multiple-value-bind (cost i-c o-c model in out) 
           (calculate-cost-from-log entry :async async)
         (declare (ignore i-c o-c))
@@ -91,40 +96,29 @@
             f-in f-out f-cost)
     (values forms f-cost f-in f-out last-m)))
 
-;; Copyright 2026 Bill
 (defun process-command-line-targets (targets)
   "Aggregates all results, automatically detecting async files by extension."
   (let ((all-forms nil) 
-        (total-cost 0.0) 
-        (total-in 0) 
-        (total-out 0) 
+        (total-cost 0.0) (total-in 0) (total-out 0) 
         (last-model "N/A"))
-    (dolist (target targets)
-      (let ((path (pathname target)))
-        (cond ((uiop:directory-exists-p path)
-               ;; Look for standard live tokens and the new aggregated async tokens
-               (dolist (file (append (uiop:directory-files path "*.tkn")
-                                     (uiop:directory-files path "*.async-tkn")))
-                 (let ((is-async (string= (pathname-type file) "async-tkn")))
-                   (multiple-value-bind (forms cost in out model) 
-                       (process-file file :async is-async)
-                     (setf all-forms (nconc all-forms forms))
-                     (incf total-cost cost)
-                     (incf total-in in)
-                     (incf total-out out)
-                     (setf last-model model)))))
-              
-              ((uiop:file-exists-p path)
-               (let ((is-async (string= (pathname-type path) "async-tkn")))
-                 (multiple-value-bind (forms cost in out model) 
-                     (process-file path :async is-async)
-                   (setf all-forms (nconc all-forms forms))
-                   (incf total-cost cost)
-                   (incf total-in in)
-                   (incf total-out out)
-                   (setf last-model model))))
-              
-              (t (format *error-output* "~&Warning: ~A not found.~%" target)))))
+    (flet ((add-to-totals (file)
+             (let ((is-async (string= (pathname-type file) "async-tkn")))
+               (multiple-value-bind (forms cost in out model) 
+                   (process-file file :async is-async)
+                 (setf all-forms (nconc all-forms forms))
+                 (incf total-cost cost)
+                 (incf total-in in)
+                 (incf total-out out)
+                 (setf last-model model)))))
+      (dolist (target targets)
+        (let ((path (pathname target)))
+          (cond ((uiop:directory-exists-p path)
+                 (dolist (file (append (uiop:directory-files path "*.tkn")
+                                       (uiop:directory-files path "*.async-tkn")))
+                   (add-to-totals file)))
+                ((uiop:file-exists-p path)
+                 (add-to-totals path))
+                (t (format *error-output* "~&Warning: ~A not found.~%" target))))))
     
     (when all-forms
       (format t "~&~%=== Aggregated API Cost Report ===")
