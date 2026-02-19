@@ -30,4 +30,5 @@
 		   #:inspect-job-stalling
 		   #:check-quota-status
 		   #:check-batch-job-status
-		   #:*gemini-service-account*))
+		   #:*gemini-service-account*
+		   #:proc-ctx-files))
