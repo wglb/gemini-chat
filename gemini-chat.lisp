@@ -150,23 +150,23 @@
 
 (defun run-chat (cmd-line)
   (multiple-value-bind (remaining-args badargs)
-	  (chk-args cmd-line  (get-version))
-	(show-opts :bad-args badargs)
-	(cond (badargs
-		   (format t "Bad arguments ~s, exiting" badargs))
-
-		  (*help-is*
-		   (print-long-help (get-version)))
-
-		  (t
-		   (gemini-chat-lib-init :static-key (get-key *keyname*))
-		   (gem-conv (format nil "~{~A ~}" remaining-args)
-					 *save*
-					 *single-shot*
-					 *exit-on-error*
-					 :model *gemini-model*
-					 :blob-ids nil
-					 :echo-to-console t))))) ;; echo to console
+      (chk-args cmd-line (get-version)) 
+    (show-opts :bad-args badargs) 
+    (cond (badargs
+           (format t "Bad arguments ~s, exiting" badargs))
+          (*help-is*
+           (print-long-help (get-version)))
+          (t
+           (gemini-chat-lib-init :static-key (get-key *keyname*))
+           (run-chat-with-kw :gemini-model *gemini-model*
+                             :context (proc-ctx-files *context*)
+                             :save (unless (s/z *save*) *save*)
+                             :tag *tag*
+                             :exit-on-error *exit-on-error*
+                             :input-files *input-files*
+                             :remaining-args remaining-args
+                             :echo-to-console t
+                             :single-shot *single-shot*))))) ;;  Pass the flag here
 
 (defun top ()
   "Toplevel function for the compiled gemini-chat executable.
