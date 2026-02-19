@@ -262,8 +262,10 @@ Returns the text string or NIL if not found."
   "Combines context, files, and task prompt. Passes blob-ids through."
   (multiple-value-bind (files-string success-p blob-ids)
       (assemble-input-files-prompt input-files exit-on-error)
-	(unless success-p
-	  (break "why no success??"))
+    ;; Replace break/unless with a definitive error check 
+    (when (and (not success-p) exit-on-error)
+      (error "Aborting: One or more input files could not be read."))
+    
     (let ((full-text 
             (if context
                 (format nil "CONTEXT:~%~a~%~%FILES:~%~a~%~%TASK:~%~a" 
@@ -390,7 +392,6 @@ Returns the text string or NIL if not found."
     (format stream "~A~%" json-line)
     (finish-output stream)))
 
-
 (defun run-chat-with-kw (&key 
                            (gemini-model "gemini-2.5-pro")
                            (context "context.txt")
@@ -400,39 +401,44 @@ Returns the text string or NIL if not found."
                            (input-files nil)
                            (batch-mode nil)
                            (batch-stream nil)
-						   (custom-id nil)
-                           (remaining-args nil))
+                           (custom-id nil)
+                           (remaining-args nil)
+                           (echo-to-console nil)
+                           (single-shot t))
   "Orchestrates prompt assembly. Batch-mode redirects to batch-stream."
   (w/log ((format nil "~a-thinking" tag) :dates :hour :show-log-file-name nil :append-or-replace :append)
-	(let ((prompt-text (car remaining-args)))
-      ;; build-full-prompt signature: (context input-files prompt-text exit-on-error)
+    (let ((prompt-text (format nil "~{~A~^ ~}" remaining-args)))
       (multiple-value-bind (assembled-prompt success-p blob-ids)
           (build-full-prompt context input-files prompt-text exit-on-error)
-		(cond (batch-mode
-			   (cond ((not (and batch-stream (open-stream-p batch-stream)))
-					  (error "Batch mode requested but :batch-stream is NIL or closed."))
+        (cond (batch-mode
+               (cond ((not (and batch-stream (open-stream-p batch-stream)))
+                      (error "Batch mode requested but :batch-stream is NIL or closed."))
+                     (success-p
+                      (write-batch-jsonl-line custom-id assembled-prompt gemini-model save batch-stream)
+                      (values t t))
+                     (exit-on-error
+                      (error "Failed to assemble prompt for ~A" (or save "unknown file")))
+                     (t 
+                      (xlogntft "Warning: prompt assembly failed (likely missing files). Continuing...")
+                      (values nil nil))))
+              
+              (success-p 
+               (let ((response (gem-conv assembled-prompt save single-shot exit-on-error 
+                                         :model gemini-model 
+                                         :blob-ids blob-ids
+                                         :echo-to-console echo-to-console)))
+                 (values response t)))
 
-					 (success-p
-					  (write-batch-jsonl-line custom-id assembled-prompt gemini-model save batch-stream)
-					  (values t t))
+              (exit-on-error
+               (error "Failed to assemble prompt for live mode."))
 
-					 (exit-on-error
-					  (error "Failed to assemble prompt for ~A" (or save "unknown file")))
-
-					 (t 
-					  (values nil nil))))
-			  
-			  (success-p ;; gem-conv signature: (initial-prompt save single-shot exit-on-error &key model blob-ids)
-			   (let ((response (gem-conv assembled-prompt save t exit-on-error 
-										 :model gemini-model 
-										 :blob-ids blob-ids)))
-				 (values response t)))
-
-			  (exit-on-error
-			   (error "Failed to assemble prompt for live mode."))
-
-			  (t 
-			   (values nil nil)))))))
+              (t 
+               (xlogntft "Warning: prompt assembly failed (likely missing files). Continuing...")
+               ;; Proceed to gem-conv with just the prompt-text to start the interactive loop
+               (let ((response (gem-conv prompt-text save single-shot exit-on-error 
+                                         :model gemini-model 
+                                         :echo-to-console echo-to-console)))
+                 (values response t)))))))) 
 
 (defun gemini-fix-file (pathname instruction)
   "Loads a file and asks Gemini to fix it. Corrected for gemini-chat-lib signature."
@@ -463,9 +469,6 @@ Returns the text string or NIL if not found."
             (xlogntft "Agentic fix successful. Result written to ~a" filename)
             response)
           (xlogntft "Agentic fix failed to return valid code.")))))
-
-
-
 
 (defun agentic-fix-involved-section (path start-line end-line instruction &key (debug nil))
   "Fixes a specific line range in PATH while providing the first 50 lines as context.
