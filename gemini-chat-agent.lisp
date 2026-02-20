@@ -7,16 +7,17 @@
   (let* ((original-code (uiop:read-file-string pathname))
          (full-prompt (format nil "SYSTEM: Expert Lisp dev. Return ONLY code. NO PROSE.~%USER: ~a~%~%CODE:~%~a" 
                               instruction original-code)))
-    ;; multiple-value-bind response from run-chat-with-kw
-    ;; Note: It returns (values response-text success-p)
     (multiple-value-bind (response success-p)
         (run-chat-with-kw :remaining-args (list full-prompt)
                           :save (format nil "~a.fixed" (file-namestring pathname)))
       (if (and success-p response)
           (progn 
             (xlogntft "Agentic fix successful for ~a. Result in .fixed file." (file-namestring pathname))
-            response) ;; Use the variable to satisfy the style-warning
-          (xlogntft "Agentic fix failed or returned empty response.")))))
+            ;; RETURN THE RESPONSE HERE
+            response) 
+          (progn
+            (xlogntft "Agentic fix failed or returned empty response.")
+            nil)))))
 
 (defun gemini-fix-region-to-file (code-text instruction &key (filename "agent-fix.lisp"))
   "Automates the transformation of a specific code block."
@@ -125,52 +126,119 @@ Uses :debug '(:agent) to trigger extended logging."
                                                     asd-content project-context instr-context))
                       :save "project-update-plan.txt")))
 
+(defun apply-agentic-plan (project-dir)
+  "Applies the agent's plan, strictly blocking Markdown to train the model."
+  (let* ((abs-dir (uiop:ensure-directory-pathname project-dir))
+         (plan-path (merge-pathnames "project-update-plan.txt" abs-dir)))
+    (cond ((uiop:file-exists-p plan-path)
+           (let ((raw-text (uiop:read-file-string plan-path)))
+             (cond ((cl-ppcre:scan "```" raw-text)
+                    ;; This specific string is what iteration 2 will see
+                    (error "CRITICAL FAILURE: You used Markdown code blocks (```). This breaks the machine parser. REPEAT THE PLAN using ONLY ===BEGIN_FILE: [path]=== tags."))
+                   (t
+                    (xlogntft "Architect: Unpacking via file-packer-lib...")
+                    (uiop:with-current-directory (abs-dir)
+                      (file-packer-lib:unpack-file plan-path))
+                    (xlogntft "Unpack complete."))))))))
+
 (defun agentic-iterative-build (project-dir instruction-files &key (max-tries 3) (debug '(:agent)))
-  "The core iterative loop. Prompts the human on turn 1 to prevent silent failure."
-  (let ((extra-context "")
-        (success-p nil)
-        (abs-project-dir (uiop:ensure-directory-pathname project-dir)))
-    (dolist (iteration (alexandria:iota max-tries :start 1))
-      (cond (success-p (return success-p))
-            (t
-             (let ((instruction (cond ((= iteration 1)
-                                       (format t "~&Architect (Bill), enter project goal: ")
-                                       (force-output)
-                                       (read-line))
-                                      (t (format nil "Fix build errors. ~a" extra-context))))
-                   (plan-path (merge-pathnames "project-update-plan.txt" abs-project-dir)))
-               
-               ;; 1. Request Plan from the Apprentice
-               ;; Wrap in with-current-directory so relative writes land in project-dir
-               (uiop:with-current-directory (abs-project-dir)
-                 (agentic-project-modify abs-project-dir instruction-files 
-                                         :extra-instruction instruction))
-               
-               ;; 2. Verify Plan Existence and apply
-               (cond ((uiop:file-exists-p plan-path)
-                      (apply-agentic-plan abs-project-dir)
-                      ;; 3. Run Build/Check
-                      (multiple-value-bind (output error-output exit-code)
-                          (uiop:run-program "make all" 
-                                            :directory abs-project-dir 
-                                            :ignore-error-status t 
-                                            :output :string 
-                                            :error-output :string)
-                        (cond ((zerop exit-code) 
-                               (setf success-p t)
-                               (xlogntft "Build SUCCESS on iteration ~d." iteration))
-                              (t 
-                               (when (member :agent debug)
-                                 (xlogntft "Build FAILED. Capturing errors."))
-                               (setf extra-context 
-                                     (format nil "ERRORS:~%~a~%~a" output error-output))))))
-                     (t (error "The Apprentice dropped the plan elsewhere! Expected: ~a" 
-                               plan-path)))))))
-    success-p))
+  "The core iterative loop. Prompts Bill on turn 1 and catches format/build errors."
+  (w/log ("agentic-iterative-build" :dates :hms :dir project-dir)
+	(let ((extra-context "")
+          (success-p nil)
+          (abs-project-dir (uiop:ensure-directory-pathname project-dir)))
+      (dolist (iteration (alexandria:iota max-tries :start 1))
+		(cond (success-p (return success-p))
+              (t
+               (let ((instruction (cond ((= iteration 1)
+										 (format t "~&Architect (Bill), enter project goal: ")
+										 (force-output)
+										 (read-line))
+										(t (format nil "Fix errors and retry. ~a" extra-context))))
+					 (plan-path (merge-pathnames "project-update-plan.txt" abs-project-dir)))
+				 
+				 (when (member :agent debug)
+                   (xlogntft "Iteration ~d: Requesting plan..." iteration))
+				 
+				 (uiop:with-current-directory (abs-project-dir)
+                   (agentic-project-modify abs-project-dir instruction-files 
+                                           :extra-instruction instruction))
+				 
+				 (handler-case
+					 (cond ((uiop:file-exists-p plan-path)
+							(apply-agentic-plan abs-project-dir)
+							(multiple-value-bind (output error-output exit-code)
+								(uiop:run-program "make all" 
+                                                  :directory abs-project-dir 
+                                                  :ignore-error-status t 
+                                                  :output :string 
+                                                  :error-output :string)
+                              (cond ((zerop exit-code) 
+									 (setf success-p t)
+									 (xlogntft "Build SUCCESS on iteration ~d." iteration))
+									(t 
+									 (when (member :agent debug)
+                                       (xlogntft "Build FAILED. Analyzing output."))
+									 (setf extra-context 
+                                           (format nil "BUILD ERRORS:~%~a~%~a" output error-output))))))
+                           (t (error "The Apprentice disappeared! No plan found at ~a" plan-path)))
+                   (error (c)
+					 (when (member :agent debug)
+                       (xlogntft "Iteration ~d failed: ~a" iteration c))
+					 (setf extra-context (format nil "FORMATTING ERROR: ~a" c))))))))
+      success-p)))
+
+(defun invoke-apprentice (goal &optional failure-log)
+  "Constructs the prompt and calls Bill's actual chat interface."
+  (let ((base-prompt (format nil "ARCHITECT'S ORDER: ~a~%~%~
+                                  STRICT RULES:~%~
+                                  1. Use ~~s for strings; NO backslashes in output.~%~
+                                  2. No spaces in flag strings.~%~
+                                  3. Output in ===BEGIN_FILE: [path]===; NO MARKDOWN." 
+                             goal))
+        (context (if failure-log 
+                     (format nil "~%FAILURE CONTEXT FROM SBCL:~%~a" failure-log)
+                     "")))
+    ;; Bridge to your KW system 
+    (run-chat-with-kw :remaining-args (list (format nil "~a~a" base-prompt context))
+                      :save "project-update-plan.txt")))
+
+(defun run-build-iteration (project-dir order-text &key (max-tries 5))
+  "Orchestrates the Apprentice to fulfill the ARCHITECT'S ORDER."
+  (let ((iteration 0)
+        (success nil)
+        (last-error nil)
+        (abs-dir (uiop:ensure-directory-pathname project-dir)))
+    (xlogntft "Starting Supervisor for Project: ~a" abs-dir)
+    (do ((try 1 (1+ try)))
+        ((or success (> try max-tries)))
+      (setf iteration try)
+      (xlogntft "Iteration ~d..." iteration)
+      (let ((response (invoke-apprentice order-text last-error)))
+        (cond ((and response (> (length response) 0))
+               (apply-agentic-plan abs-dir)
+               (multiple-value-bind (output error-output exit-code)
+                   (uiop:run-program "make test" 
+                                     :directory abs-dir 
+                                     :ignore-error-status t 
+                                     :output :string 
+                                     :error-output :string)
+                 (cond ((zerop exit-code)
+                        (setf success t)
+                        (xlogntft "SUCCESS!"))
+                       (t
+                        (setf last-error (format nil "~a~%~a" output error-output))
+                        (xlogntft "FAILED (Code ~d). Retrying..." exit-code)))))
+              (t (xlogntft "WARNING: Apprentice returned an empty plan.")))))
+    (cond (success
+           (xlogntft "Goal achieved in ~d tries." iteration))
+          (t (error "Supervisor failed to converge after ~d tries." max-tries)))))
 
 (defun example-project-modification ()
   (agentic-project-modify 
    "/home/wgl/lisplib/public/create-lisp-project/"
-   '("~/lisplib/production/contexts/triple-escape.txt" 
+   '("~/lisplib/production/contexts/system-policy.txt" ;; Added here
+     "~/lisplib/production/contexts/triple-escape.txt" 
      "~/lisplib/production/contexts/flag-refactor.txt"
      "~/lisplib/production/contexts/makefile-standard.txt")))
+
