@@ -25,9 +25,9 @@
 (defun gemini-modify-project (project-dir)
   "Triggers a single-pass project refactor using standard context rules."
   (interactive "DProject Directory: ")
-  (let ((context-files '("~/lisplib/production/context/triple-escape.txt"
-                         "~/lisplib/production/context/flag-refactor.txt"
-                         "~/lisplib/production/context/makefile-standard.txt"
+  (let ((context-files '("~/lisplib/production/contexts/triple-escape.txt"
+                         "~/lisplib/production/contexts/flag-refactor.txt"
+                         "~/lisplib/production/contexts/makefile-standard.txt"
 						 "~/lisplib/production/contexts/google-flag-migration.txt")))
     (message "Refactoring project in %s..." project-dir)
     (slime-eval-async
@@ -38,9 +38,11 @@
 (defun gemini-iterative-refactor (project-dir)
   "Triggers a multi-pass Fix-Compile-Check loop until 'make all' succeeds."
   (interactive "DProject Directory: ")
-  (let ((context-files '("~/lisplib/production/context/triple-escape.txt"
-                         "~/lisplib/production/context/flag-refactor.txt"
-                         "~/lisplib/production/context/makefile-standard.txt")))
+  (let ((context-files '("~/lisplib/production/contexts/triple-escape.txt"
+                         "~/lisplib/production/contexts/flag-refactor.txt"
+                         "~/lisplib/production/contexts/makefile-standard.txt"
+						 "~/lisplib/production/contexts/system-policy.txt"
+						 "~/lisplib/production/contexts/formatting.txt")))
     (message "Starting iterative refactor loop for %s..." project-dir)
     (slime-eval-async
      `(gemini-chat-lib:agentic-iterative-build ,project-dir ',context-files :debug '(:agent))

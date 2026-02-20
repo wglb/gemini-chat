@@ -150,7 +150,7 @@
 
 (defun run-chat (cmd-line)
   (multiple-value-bind (remaining-args badargs)
-      (chk-args cmd-line (get-version)) 
+      (chk-args cmd-line (get-version))
     (show-opts :bad-args badargs) 
     (cond (badargs
            (format t "Bad arguments ~s, exiting" badargs))
