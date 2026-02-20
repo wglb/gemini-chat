@@ -1,5 +1,5 @@
 (asdf:defsystem :gemini-cost-calculator
-  :version "0.2.1"
+  :version "0.2.5"
   :author "wgl@ciex-security.com"
   :license :mit
   :description "Calculates the USD cost of Gemini API usage based on token counts."
