@@ -1,3 +1,7 @@
+;;gemini-chat-pkg.lisp
+;;;; Copyright (c) 2025-2026 Ciex-Security <wgl@ciex-security.com>
+;;;; License: MIT
+
 (defpackage #:gemini-chat
   (:use #:cl
         #:jsown

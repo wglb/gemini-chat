@@ -1,3 +1,7 @@
+;;;; gemini-chat.asd
+;;;; Copyright (c) 2025-2026 Ciex-Security <wgl@ciex-security.com>
+;;;; License: MIT
+
 (asdf:defsystem #:gemini-chat
   :description "Lisp-based gemini chat"
   :author "wgl@ciex-security.com"

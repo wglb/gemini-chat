@@ -1,5 +1,6 @@
 ;;;; gemini-chat-pkg.lisp
-;;;; This file defines the GEMINI-CHAT package.
+;;;; Copyright (c) 2025-2026 Ciex-Security <wgl@ciex-security.com>
+;;;; License: MIT
 
 (defpackage #:gemini-chat-lib
   (:use #:cl

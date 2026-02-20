@@ -1,5 +1,23 @@
 ;;;; gemini-chat.lisp
-;;;; -*- Mode: Lisp; indent-tabs-mode: nil -*-
+;;;; Copyright (c) 2025-2026 Ciex-Security <wgl@ciex-security.com>
+;;;;
+;;;; Permission is hereby granted, free of charge, to any person obtaining a copy 
+;;;; of this software and associated documentation files (the "Software"), to deal 
+;;;; in the Software without restriction, including without limitation the rights 
+;;;; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+;;;; copies of the Software, and to permit persons to whom the Software is 
+;;;; furnished to do so, subject to the following conditions:
+;;;;
+;;;; The above copyright notice and this permission notice shall be included in 
+;;;; all copies or substantial portions of the Software.
+;;;;
+;;;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+;;;; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+;;;; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+;;;; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+;;;; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, 
+;;;; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN 
+;;;; THE SOFTWARE.
 
 (in-package #:gemini-chat)
 
@@ -26,14 +44,14 @@
 
 (define-flag *keyname*
   :help "Name of gemini static api key to retrieve"
-  :description "Name of gemini static api key to retrieve"
   :type string
   :selector "key"
-  :default-value "personal")
+  :default-value "personal"
+  :description "The name of the key. This is first looked for in ~/.gemini/keys.lsp and if not found, then in an environmental variable GEMINI_API_KEY")
 
 (define-flag *api-url*
   :help "URL for gemini api"
-  :description "URL for gemini api"
+  :description "URL for gemini api. See the google studio documentation"
   :type string
   :selector "api-url"
   :default-value "https://generativelanguage.googleapis.com/v1beta/models/")
@@ -81,18 +99,18 @@
   :type boolean
   :selector "help"
   :default-value nil
-  :description "Print the detailed help using each of the description files")
+  :description "Print the long, detailed help using each of the description files")
 
 (define-flag *single-shot*
   :help "Quit after first query completed"
-  :description "Quit after first query completed"
+  :description "This for a conversation"
   :type boolean
   :selector "single-shot"
   :default-value nil)
 
 (define-flag *exit-on-error*
   :help "Exit the program immediately if an input file cannot be read."
-  :description "Exit the program immediately if an input file cannot be read."
+  :description "The exit will be immediate, before gemini is called"
   :type boolean
   :selector "exit-on-error"
   :default-value nil)
