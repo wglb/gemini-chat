@@ -137,7 +137,7 @@
   `(with-open-log-file ((format nil "~a-error" (or ,tag "")) 
                         :dates :hour 
                         :show-log-file-name nil 
-                        :append-or-replace :append)
+                        :append-or-replace :append) 
      (xlogf ,control-string ,@args)))
 
 (defun extract-txt (parsed-json echo-to-console)
