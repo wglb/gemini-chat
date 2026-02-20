@@ -204,7 +204,7 @@ Uses :debug '(:agent) to trigger extended logging."
                       :save "project-update-plan.txt")))
 
 (defun run-build-iteration (project-dir order-text &key (max-tries 5))
-  "Orchestrates the Apprentice to fulfill the ARCHITECT'S ORDER."
+  "Orchestrates the Apprentice to fulfill the ARCHITECT'S ORDER across the whole project."
   (let ((iteration 0)
         (success nil)
         (last-error nil)
@@ -214,9 +214,12 @@ Uses :debug '(:agent) to trigger extended logging."
         ((or success (> try max-tries)))
       (setf iteration try)
       (xlogntft "Iteration ~d..." iteration)
+      ;; 1. Call Apprentice to generate a multi-file project-update-plan.txt
       (let ((response (invoke-apprentice order-text last-error)))
         (cond ((and response (> (length response) 0))
+               ;; 2. Unpack the plan into the project directory
                (apply-agentic-plan abs-dir)
+               ;; 3. Run project-wide tests (Tier 1, 2, and 3)
                (multiple-value-bind (output error-output exit-code)
                    (uiop:run-program "make test" 
                                      :directory abs-dir 
@@ -225,14 +228,15 @@ Uses :debug '(:agent) to trigger extended logging."
                                      :error-output :string)
                  (cond ((zerop exit-code)
                         (setf success t)
-                        (xlogntft "SUCCESS!"))
+                        (xlogntft "SUCCESS! Build and Tier-3 tests passed."))
                        (t
-                        (setf last-error (format nil "~a~%~a" output error-output))
-                        (xlogntft "FAILED (Code ~d). Retrying..." exit-code)))))
-              (t (xlogntft "WARNING: Apprentice returned an empty plan.")))))
+                        ;; 4. Feed build failures back into the next iteration
+                        (setf last-error (format nil "STDOUT: ~a~%STDERR: ~a" output error-output))
+                        (xlogntft "FAILED (Code ~d). Analyzing project errors..." exit-code)))))
+              (t (xlogntft "WARNING: Apprentice failed to return a plan string.")))))
     (cond (success
            (xlogntft "Goal achieved in ~d tries." iteration))
-          (t (error "Supervisor failed to converge after ~d tries." max-tries)))))
+          (t (error "Supervisor failed to converge on a working project state after ~d tries." max-tries)))))
 
 (defun example-project-modification ()
   (agentic-project-modify 
