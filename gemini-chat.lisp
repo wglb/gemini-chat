@@ -190,5 +190,5 @@
                             :toplevel #'top
                             :save-runtime-options t
                             :executable t
-                            :compression t))
+                            :compression 12))
 
