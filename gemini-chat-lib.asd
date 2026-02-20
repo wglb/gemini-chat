@@ -14,4 +14,5 @@
                #:xlog)
   :components ((:file "gemini-chat-lib-pkg")
                (:file "gemini-chat-lib")
-			   (:file "gemini-client")))
+			   (:file "gemini-client")
+			   (:file "gemini-chat-agent")))
