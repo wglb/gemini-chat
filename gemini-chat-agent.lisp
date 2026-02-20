@@ -204,39 +204,43 @@ Uses :debug '(:agent) to trigger extended logging."
                       :save "project-update-plan.txt")))
 
 (defun run-build-iteration (project-dir order-text &key (max-tries 5))
-  "Orchestrates the Apprentice to fulfill the ARCHITECT'S ORDER across the whole project."
+  "Orchestrates the Apprentice using either a raw string or a file-based order."
   (let ((iteration 0)
         (success nil)
         (last-error nil)
-        (abs-dir (uiop:ensure-directory-pathname project-dir)))
-    (xlogntft "Starting Supervisor for Project: ~a" abs-dir)
-    (do ((try 1 (1+ try)))
-        ((or success (> try max-tries)))
-      (setf iteration try)
-      (xlogntft "Iteration ~d..." iteration)
-      ;; 1. Call Apprentice to generate a multi-file project-update-plan.txt
-      (let ((response (invoke-apprentice order-text last-error)))
-        (cond ((and response (> (length response) 0))
-               ;; 2. Unpack the plan into the project directory
-               (apply-agentic-plan abs-dir)
-               ;; 3. Run project-wide tests (Tier 1, 2, and 3)
-               (multiple-value-bind (output error-output exit-code)
-                   (uiop:run-program "make test" 
-                                     :directory abs-dir 
-                                     :ignore-error-status t 
-                                     :output :string 
-                                     :error-output :string)
-                 (cond ((zerop exit-code)
-                        (setf success t)
-                        (xlogntft "SUCCESS! Build and Tier-3 tests passed."))
-                       (t
-                        ;; 4. Feed build failures back into the next iteration
-                        (setf last-error (format nil "STDOUT: ~a~%STDERR: ~a" output error-output))
-                        (xlogntft "FAILED (Code ~d). Analyzing project errors..." exit-code)))))
-              (t (xlogntft "WARNING: Apprentice failed to return a plan string.")))))
+        (abs-dir (uiop:ensure-directory-pathname project-dir))
+        (instruction-files '("~/lisplib/production/contexts/system-policy.txt"
+                             "~/lisplib/production/contexts/triple-escape.txt"
+                             "~/lisplib/production/contexts/makefile-standard.txt")))
+    (let ((resolved-order (cond ((pathnamep order-text) (uiop:read-file-string order-text))
+                                (t order-text))))
+      (xlogntft "Starting Supervisor for Project: ~a" abs-dir)
+      (do ((try 1 (1+ try)))
+          ((or success (> try max-tries)))
+        (setf iteration try)
+        (xlogntft "Iteration ~d..." iteration)
+        (let ((response (agentic-project-modify abs-dir instruction-files 
+                                                :extra-instruction (cond ((= try 1) resolved-order)
+                                                                         (t last-error)))))
+          (cond ((and response (> (length response) 0))
+                 (apply-agentic-plan abs-dir)
+                 (multiple-value-bind (output error-output exit-code)
+                     (uiop:run-program "make test" 
+                                       :directory abs-dir 
+                                       :ignore-error-status t 
+                                       :output :string 
+                                       :error-output :string)
+                   (cond ((zerop exit-code)
+                          (setf success t)
+                          (xlogntft "SUCCESS! Build and Tier-3 tests passed."))
+                         (t
+                          (setf last-error (format nil "BUILD FAILED. ERRORS:~%~a~%~a" 
+                                                   output error-output))
+                          (xlogntft "FAILED (Code ~d). Retrying..." exit-code)))))
+                (t (xlogntft "WARNING: Apprentice failed to return a plan string."))))))
     (cond (success
            (xlogntft "Goal achieved in ~d tries." iteration))
-          (t (error "Supervisor failed to converge on a working project state after ~d tries." max-tries)))))
+          (t (error "Supervisor failed to converge after ~d tries." max-tries)))))
 
 (defun example-project-modification ()
   (agentic-project-modify 
