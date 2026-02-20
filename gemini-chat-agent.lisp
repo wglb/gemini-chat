@@ -203,15 +203,18 @@ Uses :debug '(:agent) to trigger extended logging."
     (run-chat-with-kw :remaining-args (list (format nil "~a~a" base-prompt context))
                       :save "project-update-plan.txt")))
 
-(defun run-build-iteration (project-dir order-text &key (max-tries 5))
+(defun run-build-iteration
+	(project-dir
+	 order-text
+	 &key (max-tries 5)
+       (instruction-files '("~/lisplib/production/contexts/system-policy.txt"
+                            "~/lisplib/production/contexts/triple-escape.txt"
+                            "~/lisplib/production/contexts/makefile-standard.txt")))
   "Orchestrates the Apprentice using either a raw string or a file-based order."
   (let ((iteration 0)
         (success nil)
         (last-error nil)
-        (abs-dir (uiop:ensure-directory-pathname project-dir))
-        (instruction-files '("~/lisplib/production/contexts/system-policy.txt"
-                             "~/lisplib/production/contexts/triple-escape.txt"
-                             "~/lisplib/production/contexts/makefile-standard.txt")))
+        (abs-dir (uiop:ensure-directory-pathname project-dir)))
     (let ((resolved-order (cond ((pathnamep order-text) (uiop:read-file-string order-text))
                                 (t order-text))))
       (xlogntft "Starting Supervisor for Project: ~a" abs-dir)
