@@ -12,11 +12,17 @@ $(CALC_EXE): gemini-cost-calculator.asd gemini-cost-calculator.lisp gemini-cost-
 		--eval '(save-core)'
 
 $(CHAT_EXE): gemini-chat.asd gemini-chat.lisp gemini-chat-agent.lisp gemini-chat-lib.lisp gemini-chat-lib-pkg.lisp gemini-chat-pkg.lisp gemini-client.lisp
-	sbcl --dynamic-space-size 2000 --disable-debugger \
-		--eval "(asdf:operate 'asdf:load-op 'gemini-chat)" \
-		--eval '(in-package #:gemini-chat)' \
-		--eval '(save-core)'
+	sbcl --dynamic-space-size 2000 \
+	    --disable-debugger \
+	    --eval '(ql:quickload :gemini-chat)' \
+        --eval '(asdf:make :gemini-chat)' \
+        --quit
 	touch $(CHAT_EXE)
+
+#		--eval "(asdf:operate 'asdf:load-op 'gemini-chat)" \
+#		--eval '(in-package #:gemini-chat)' \
+#		--eval '(save-core)'
+
 
 install: $(BIN_DIR)/$(CALC_EXE) $(BIN_DIR)/$(CHAT_EXE)
 

@@ -188,6 +188,23 @@
 
 (defun top ()
   "Toplevel function for the compiled gemini-chat executable.
+   Works portably across Linux and macOS via UIOP."
+  (let ((args (uiop:command-line-arguments)))
+    (handler-case
+        (progn
+          ;; If you need to debug arguments on the other system, 
+          ;; you can uncomment the line below:
+          ;; (format t "Args received: ~s~%" args)
+          (run-chat args)
+          (uiop:quit 0))
+      (error (c)
+        (format *error-output* "~&Fatal Error: ~A~%" c)
+        (uiop:quit 1)))))
+
+
+#+nil
+(defun top ()
+  "Toplevel function for the compiled gemini-chat executable.
    It retrieves arguments from sb-ext:*posix-argv* and passes them to run-chat."
   ;; com.google.flag:parse-command-line without :argv defaults to sb-ext:*posix-argv*
   ;; However, run-chat expects a list of strings, so pass (rest sb-ext:*posix-argv*)
