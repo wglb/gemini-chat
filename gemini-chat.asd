@@ -12,7 +12,7 @@
                #:xlog
                #:flag-help
                #:com.google.flag
-               #:uiop) ; Added uiop for robust path/arg handling
+               #:uiop)		 ; Added uiop for robust path/arg handling
   ;; Removed :defsystem-depends-on ("deploy") to avoid "warm boot" errors
   :components ((:file "gemini-chat-pkg")
                (:file "gemini-chat"))
